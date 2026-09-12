@@ -137,6 +137,7 @@ rules:
 
 review:
   require_human_approval_for:
+    - test_plan
     - code_write
     - git_commit
     - git_push

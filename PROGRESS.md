@@ -26,17 +26,22 @@ cd apps/vscode-extension && npm run compile
 | 2 | LLM provider abstraction + model router | DONE | 7 providers, capability routing, health fallback, budget, cost math verified |
 | 3 | Observability + cost tracking (DB models) | DONE | 16 ORM tables, RunTracker spans, daily cost rollup, CostGovernor — verified |
 | 4 | API gateway (FastAPI): auth, projects, runs, WS | TODO | |
-| 5 | Knowledge service: repo index + retrieval | TODO | |
-| 6 | Tool execution layer | TODO | fs/git/playwright/api/db/mobile/jira/slack/teams |
-| 7 | Agent engine: LangGraph orchestrator + 10 agents | TODO | |
-| 8 | Execution service: Playwright runs + artifacts | TODO | |
-| 9 | Self-healing + failure analysis loop | TODO | |
-| 10 | Notification service (Slack/Teams) | TODO | |
+| 5 | Knowledge service: repo index + retrieval | DONE | framework/layout/naming detection, symbol extraction, hybrid embed+lexical retrieval — verified on sample repo |
+| 6 | Tool execution layer | DONE | 31 tools; fs confinement, cmd allowlist, git branch protection, read-only SQL, PW explore+run, all guards verified |
+| 7 | Agent engine: orchestrator + 10 agents | DONE | resumable state graph, 6 run modes, durable suspend/resume across approvals |
+| 8 | Execution service: Playwright runs + artifacts | DONE | apply-on-approval, JSON report parsing, flakiness ledger, commit-on-green |
+| 9 | Self-healing + failure analysis loop | DONE | 11 deterministic signatures + LLM triage, product-defect safety override, verify-or-revert |
+| 10 | Notification service (Slack/Teams) | DONE | Slack blocks + Teams adaptive cards, redacted, wired into Reporting agent |
 | 11 | VS Code extension | TODO | |
 | 12 | Control plane web UI | TODO | |
 | 13 | Infrastructure: docker-compose, CI | TODO | |
 | 14 | Tests + sample target repo fixture | TODO | |
 | 15 | Docs + final polish | TODO | |
 
+## Verified end-to-end (offline, no credentials)
+`python -m scripts.selfcheck` passes: 2 approval gates (test_plan -> code_write), durable resume,
+5 generated artifacts on disk, valid tagged Gherkin, 10 agent traces / 9 LLM traces / 11 tool traces,
+6 audit entries, secret redaction + workspace confinement + path-escape all blocked.
+
 ## Next action
-Phase 6: tool execution layer (filesystem, git, playwright, api, db, shell), then Phase 5 knowledge, then Phase 7 agents.
+Phase 4: API gateway (FastAPI: auth, projects, runs, approvals, WS stream, metrics), then Phase 11 VS Code extension.

@@ -34,6 +34,38 @@ def _last_user(req: LLMRequest) -> str:
     return req.prompt_text
 
 
+# Markers the agents use to delimit the actual user instruction inside a prompt
+# that also carries project context. Without this the heuristics would derive a
+# feature name from the scaffolding ("Project: acme-web-e2e") instead of the ask.
+_FOCUS_MARKERS = (
+    "QA engineer's request:",
+    "Feature to automate:",
+    "## Requirement",
+    "Requirement:",
+    "Title:",
+)
+
+
+def _focus(prompt: str) -> str:
+    """Narrow a context-heavy prompt down to the instruction it is about."""
+    for marker in _FOCUS_MARKERS:
+        index = prompt.find(marker)
+        if index == -1:
+            continue
+        tail = prompt[index + len(marker):].strip()
+        if marker == "## Requirement":
+            for line in tail.splitlines():
+                if line.lower().startswith("title:"):
+                    return line.split(":", 1)[1].strip()
+            tail = tail.lstrip()
+        # Take the first non-empty, non-metadata line.
+        for line in tail.splitlines():
+            candidate = line.strip()
+            if candidate and not candidate.startswith(("#", "-", "*", "[", "|")):
+                return candidate
+    return prompt
+
+
 def _keywords(text: str, limit: int = 6) -> list[str]:
     words = re.findall(r"[A-Za-z][A-Za-z0-9_]+", text)
     out: list[str] = []
@@ -349,7 +381,7 @@ class MockProvider(BaseProvider):
         super().__init__(default_model=default_model)
 
     async def _chat(self, req: LLMRequest) -> LLMResponse:
-        prompt = _last_user(req)
+        prompt = _focus(_last_user(req))
         handler = _HANDLERS.get(req.task)
 
         if handler is None:

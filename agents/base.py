@@ -1,0 +1,276 @@
+"""Agent contract and shared context.
+
+Each agent is a small, single-purpose unit: it reads the shared
+:class:`AgentContext`, does one job, writes its result back, and records a
+trace. Agents never call each other — the orchestrator owns control flow, which
+keeps the pipeline inspectable and makes any single agent testable alone.
+"""
+
+from __future__ import annotations
+
+import abc
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Sequence
+
+from packages.aiqa_types.enums import (
+    AgentName,
+    ApprovalKind,
+    Capability,
+    RiskLevel,
+    RunMode,
+    Severity,
+)
+from packages.aiqa_types.models import (
+    ApprovalRequest,
+    CodeBundle,
+    ExecutionResult,
+    ExplorationResult,
+    FailureAnalysis,
+    HealProposal,
+    Project,
+    RepoProfile,
+    Requirement,
+    RunReport,
+    StandardsReport,
+    TestPlan,
+)
+from packages.agent_protocol import AgentFailure, ApprovalRequired  # noqa: F401
+from packages.llm_provider.base import ChatMessage, LLMResponse
+from services.model_router.router import ModelRouter, RouterBudget
+from tools.base import ToolRegistry, ToolResult
+
+log = logging.getLogger("aiqa.agents")
+
+
+# Control-flow signals live in packages.agent_protocol so the observability layer
+# can distinguish "waiting for a human" from "failed" without importing agents.
+
+
+# =========================================================================== #
+# Shared state
+# =========================================================================== #
+@dataclass
+class AgentContext:
+    """The blackboard every agent reads from and writes to."""
+
+    run_id: str
+    project: Project
+    instruction: str
+    mode: RunMode = RunMode.FULL
+
+    # Infrastructure
+    router: ModelRouter = field(default=None)          # type: ignore[assignment]
+    tools: ToolRegistry = field(default=None)          # type: ignore[assignment]
+    tracker: Any = None
+    budget: RouterBudget = field(default_factory=RouterBudget)
+    standards: dict[str, Any] = field(default_factory=dict)
+
+    # Accumulated artifacts
+    requirement: Requirement | None = None
+    repo_profile: RepoProfile | None = None
+    exploration: ExplorationResult | None = None
+    test_plan: TestPlan | None = None
+    code_bundle: CodeBundle | None = None
+    standards_report: StandardsReport | None = None
+    execution: ExecutionResult | None = None
+    analyses: list[FailureAnalysis] = field(default_factory=list)
+    heals: list[HealProposal] = field(default_factory=list)
+    report: RunReport | None = None
+
+    # Control
+    approvals: dict[str, ApprovalRequest] = field(default_factory=dict)
+    granted: set[str] = field(default_factory=set)     # approval kinds already granted
+    auto_approve: bool = False
+    iteration: int = 0
+    max_iterations: int = 3
+    notes: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    retrieved_context: str = ""
+    toolchain: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------ #
+    @property
+    def project_root(self) -> str:
+        return self.project.repository_path
+
+    def note(self, text: str) -> None:
+        self.notes.append(text)
+        if self.tracker:
+            self.tracker.log(text)
+
+    def warn(self, text: str) -> None:
+        self.warnings.append(text)
+        if self.tracker:
+            self.tracker.log(text, level=Severity.WARNING)
+
+    def is_granted(self, kind: ApprovalKind) -> bool:
+        return self.auto_approve or kind.value in self.granted
+
+    def grant(self, kind: ApprovalKind) -> None:
+        self.granted.add(kind.value)
+
+    def requires_approval(self, kind: ApprovalKind) -> bool:
+        """Consult the project's standards policy for this gate."""
+        required = (self.standards.get("review", {}) or {}).get("require_human_approval_for", [])
+        return kind.value in required
+
+
+# =========================================================================== #
+# Base agent
+# =========================================================================== #
+class BaseAgent(abc.ABC):
+    """One responsibility, one agent."""
+
+    name: AgentName = AgentName.ORCHESTRATOR
+    capability: Capability = Capability.FAST
+    description: str = ""
+    #: Agents marked optional are skipped (with a warning) when they fail.
+    optional: bool = False
+
+    # ------------------------------------------------------------------ #
+    @abc.abstractmethod
+    async def run(self, ctx: AgentContext) -> None:
+        """Do the work, mutating ``ctx`` in place."""
+
+    def skip_reason(self, ctx: AgentContext) -> str:
+        """Return a non-empty string to skip this agent for this run."""
+        return ""
+
+    def progress(self, ctx: AgentContext) -> float | None:
+        return None
+
+    # -- LLM helpers ---------------------------------------------------- #
+    async def ask(
+        self,
+        ctx: AgentContext,
+        system: str,
+        user: str,
+        *,
+        task: str,
+        json_mode: bool = False,
+        capability: Capability | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMResponse:
+        """Single LLM turn, routed by capability and charged to the run budget."""
+        messages: Sequence[ChatMessage] = [ChatMessage.system(system), ChatMessage.user(user)]
+        return await ctx.router.complete(
+            messages,
+            capability=capability or self.capability,
+            task=task,
+            agent=self.name,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            budget=ctx.budget,
+            run_id=ctx.run_id,
+        )
+
+    async def ask_json(
+        self,
+        ctx: AgentContext,
+        system: str,
+        user: str,
+        *,
+        task: str,
+        fallback: Any = None,
+        capability: Capability | None = None,
+        max_tokens: int | None = None,
+        retries: int = 1,
+    ) -> Any:
+        """Ask for JSON and *guarantee* a usable Python object.
+
+        Models drift from schemas. Rather than fail a whole QA run on a stray
+        comma, we retry once with an explicit repair instruction and then fall
+        back to ``fallback`` so downstream agents always have something valid.
+        """
+        attempt_system = system
+        last_text = ""
+        for attempt in range(retries + 1):
+            response = await self.ask(
+                ctx, attempt_system, user, task=task, json_mode=True,
+                capability=capability, max_tokens=max_tokens,
+            )
+            last_text = response.text
+            parsed = response.json()
+            if parsed is not None:
+                return parsed
+            if attempt < retries:
+                attempt_system = (
+                    system
+                    + "\n\nCRITICAL: your previous reply was not valid JSON. "
+                    "Reply with a single JSON object and nothing else — no prose, no code fences."
+                )
+                ctx.warn(f"{self.name.value}: model returned non-JSON, retrying once")
+        ctx.warn(
+            f"{self.name.value}: could not obtain valid JSON after {retries + 1} attempt(s); "
+            f"using deterministic fallback"
+        )
+        log.debug("unparseable model output: %s", last_text[:500])
+        return fallback
+
+    # -- tool helpers --------------------------------------------------- #
+    def tool(self, ctx: AgentContext, name: str, **kwargs: Any) -> ToolResult:
+        if ctx.tools is None:
+            return ToolResult.failure("no tool registry bound to this run")
+        return ctx.tools.invoke(name, **kwargs)
+
+    # -- approval helper ------------------------------------------------ #
+    def request_approval(
+        self,
+        ctx: AgentContext,
+        kind: ApprovalKind,
+        title: str,
+        description: str = "",
+        risk: RiskLevel = RiskLevel.MEDIUM,
+        payload: dict[str, Any] | None = None,
+        diff_preview: str = "",
+    ) -> None:
+        """Raise :class:`ApprovalRequired` unless this gate is already satisfied.
+
+        Auto-approval is allowed only when the risk is at or below the project's
+        ``auto_approve_below_risk`` threshold — an explicit policy decision, not
+        an agent's judgement call.
+        """
+        if ctx.is_granted(kind):
+            return
+
+        threshold = str((ctx.standards.get("review", {}) or {}).get("auto_approve_below_risk", "low"))
+        try:
+            threshold_rank = RiskLevel(threshold).rank
+        except ValueError:
+            threshold_rank = RiskLevel.LOW.rank
+
+        if not ctx.requires_approval(kind) and risk.rank <= threshold_rank:
+            ctx.note(f"auto-approved {kind.value} (risk={risk.value} ≤ policy threshold {threshold})")
+            ctx.grant(kind)
+            return
+
+        request = ApprovalRequest(
+            run_id=ctx.run_id,
+            project_id=ctx.project.id,
+            kind=kind,
+            title=title,
+            description=description,
+            risk=risk,
+            payload=payload or {},
+            diff_preview=diff_preview[:120_000],
+            requested_by=self.name.value,
+        )
+        ctx.approvals[request.id] = request
+        raise ApprovalRequired(request)
+
+
+# --------------------------------------------------------------------------- #
+def json_block(value: Any, limit: int = 8000) -> str:
+    """Compact JSON for prompt embedding."""
+    try:
+        text = json.dumps(value, indent=2, default=str, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(value)
+    if len(text) > limit:
+        text = text[:limit] + "\n... (truncated)"
+    return text

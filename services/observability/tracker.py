@@ -19,6 +19,7 @@ from typing import Any, Callable
 from sqlalchemy import func, select
 
 from configs.settings import get_settings
+from packages.agent_protocol import is_control_signal
 from packages.aiqa_types.enums import AgentName, AgentStatus, AuditAction, Severity
 from packages.aiqa_types.models import (
     AgentTrace,
@@ -163,13 +164,24 @@ class RunTracker:
         try:
             yield trace
         except Exception as exc:
-            trace.status = AgentStatus.FAILED
-            trace.error = str(exc)[:2000]
             trace.latency_ms = int((time.perf_counter() - started) * 1000)
             trace.ended_at = _utcnow()
-            self._persist_trace(trace)
-            self.emit("agent_failed", f"{agent.value} failed: {exc}", agent=agent, level=Severity.ERROR,
-                      data={"trace_id": trace.id, "error": str(exc)[:500]})
+            if is_control_signal(exc):
+                # The agent is waiting for a human, not broken.
+                trace.status = AgentStatus.WAITING_APPROVAL
+                self._persist_trace(trace)
+                self.emit(
+                    "agent_suspended",
+                    f"{agent.value} is waiting for approval: {exc}",
+                    agent=agent, level=Severity.INFO,
+                    data={"trace_id": trace.id, "reason": str(exc)[:300]},
+                )
+            else:
+                trace.status = AgentStatus.FAILED
+                trace.error = str(exc)[:2000]
+                self._persist_trace(trace)
+                self.emit("agent_failed", f"{agent.value} failed: {exc}", agent=agent, level=Severity.ERROR,
+                          data={"trace_id": trace.id, "error": str(exc)[:500]})
             raise
         else:
             if trace.status == AgentStatus.RUNNING:

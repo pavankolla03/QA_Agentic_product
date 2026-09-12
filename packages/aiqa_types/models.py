@@ -80,6 +80,7 @@ class Project(Base):
     database_dsn_ref: str | None = None    # name of an env var, never the DSN itself
     standards_override: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    per_run_cost_limit_usd: float = 2.0
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -157,12 +158,26 @@ class RepoProfile(Base):
     conventions_summary: str = ""
     indexed_at: datetime = Field(default_factory=utcnow)
 
-    def find_symbol(self, name: str) -> RepoSymbol | None:
+    def find_symbol(self, name: str, kind: str | None = None) -> RepoSymbol | None:
+        """Locate a reusable symbol.
+
+        Exact-case matches win over case-insensitive ones: a repository can
+        legitimately contain both a ``LoginPage`` class and a ``loginPage``
+        fixture, and returning the wrong one would make the Code Generation
+        Agent reuse the wrong thing.
+        """
+        candidates = [s for s in self.symbols if kind is None or s.kind == kind]
+        for sym in candidates:
+            if sym.name == name:
+                return sym
         lowered = name.lower()
-        for sym in self.symbols:
+        for sym in candidates:
             if sym.name.lower() == lowered:
                 return sym
         return None
+
+    def symbols_of(self, kind: str) -> list[RepoSymbol]:
+        return [s for s in self.symbols if s.kind == kind]
 
 
 # =========================================================================== #
