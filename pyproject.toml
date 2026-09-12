@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiqa-engineer"
+version = "0.1.0"
+description = "Autonomous AI QA Engineering Platform — agentic test automation with human approval gates"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "httpx>=0.27",
+  "python-dotenv>=1.0",
+  "pyyaml>=6.0",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
+  "websockets>=12.0",
+  "tenacity>=8.2",
+  "rich>=13.7",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1", "pgvector>=0.2"]
+graph = ["langgraph>=0.2", "langchain-core>=0.3"]
+vector = ["chromadb>=0.5"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=5.0", "ruff>=0.4", "mypy>=1.10", "respx>=0.21"]
+
+[project.scripts]
+aiqa = "services.api_gateway.cli:app"
+
+[tool.setuptools]
+packages = ["packages", "services", "agents", "tools", "scripts"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+exclude = ["apps/vscode-extension", ".venv", "tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

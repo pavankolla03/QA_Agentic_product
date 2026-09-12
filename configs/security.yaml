@@ -1,0 +1,119 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Security & Governance policy. Enforced by packages/security at runtime.
+# ─────────────────────────────────────────────────────────────────────────────
+version: 1
+
+workspace:
+  # Agents may only read/write inside the registered project root.
+  enforce_root_confinement: true
+  follow_symlinks: false
+  max_file_bytes: 2097152        # 2 MiB per file read
+  max_write_bytes: 524288        # 512 KiB per file write
+
+  deny_paths:
+    - ".env"
+    - ".env.*"
+    - "**/.env"
+    - "**/.env.*"
+    - "**/id_rsa"
+    - "**/id_ed25519"
+    - "**/*.pem"
+    - "**/*.key"
+    - "**/*.pfx"
+    - "**/*.p12"
+    - "**/.aws/**"
+    - "**/.ssh/**"
+    - "**/.npmrc"
+    - "**/.netrc"
+    - "**/secrets/**"
+    - "**/credentials*"
+    - "**/.git/config"
+    - "**/node_modules/**"
+
+  write_allow_globs:
+    - "tests/**"
+    - "e2e/**"
+    - "features/**"
+    - "src/test/**"
+    - "cypress/**"
+    - "playwright.config.*"
+    - ".aiqa/**"
+
+commands:
+  # Allowlist of executables the Execution Agent may invoke. Anything else is denied.
+  allow:
+    - npx
+    - npm
+    - pnpm
+    - yarn
+    - node
+    - python
+    - python3
+    - pytest
+    - playwright
+    - git
+    - mvn
+    - gradle
+  deny_args_patterns:
+    - 'rm\s+-rf'
+    - '>\s*/dev/'
+    - 'curl\s+[^|]*\|\s*(sh|bash)'
+    - 'wget\s+[^|]*\|\s*(sh|bash)'
+    - 'shutdown'
+    - 'mkfs'
+    - 'format\s+[a-zA-Z]:'
+    - 'git\s+push\s+--force'
+    - 'git\s+reset\s+--hard'
+    - 'Remove-Item\s+-Recurse'
+  timeout_seconds: 900
+
+git:
+  allow_commit: true
+  allow_push: false              # push always requires explicit human approval
+  protected_branches: ["main", "master", "develop", "release/*"]
+  branch_prefix: "aiqa/"
+
+redaction:
+  # Applied to EVERY string before it can enter a prompt or a log.
+  enabled: true
+  patterns:
+    - name: private_key_block
+      regex: '-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z]*PRIVATE KEY-----'
+    - name: aws_access_key
+      regex: 'AKIA[0-9A-Z]{16}'
+    - name: github_token
+      regex: 'gh[pousr]_[A-Za-z0-9]{20,}'
+    - name: slack_token
+      regex: 'xox[baprs]-[A-Za-z0-9-]{10,}'
+    - name: anthropic_key
+      regex: 'sk-ant-[A-Za-z0-9_\-]{20,}'
+    - name: openai_key
+      regex: 'sk-[A-Za-z0-9_\-]{20,}'
+    - name: google_key
+      regex: 'AIza[0-9A-Za-z_\-]{35}'
+    - name: jwt
+      regex: 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'
+    - name: bearer
+      regex: '(?i)bearer\s+[A-Za-z0-9_\-\.=]{20,}'
+    - name: connection_string
+      regex: '(?i)(postgres|postgresql|mysql|mongodb\+srv|mongodb|redis|amqp)://[^\s''"]+:[^\s''"]+@[^\s''"]+'
+    - name: password_assignment
+      regex: '(?i)\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*[''"]?([^\s''"]{4,})'
+      group: 2
+    - name: credit_card
+      regex: '\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b'
+    - name: email
+      regex: '[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}'
+      severity: low
+
+rbac:
+  roles:
+    viewer:   ["project:read", "run:read", "report:read"]
+    engineer: ["project:read", "run:read", "report:read", "run:create", "approval:respond", "knowledge:index"]
+    lead:     ["project:read", "run:read", "report:read", "run:create", "approval:respond",
+               "knowledge:index", "project:write", "standards:write", "run:cancel", "git:push"]
+    admin:    ["*"]
+
+cost:
+  enforce_limits: true
+  block_on_exceed: true

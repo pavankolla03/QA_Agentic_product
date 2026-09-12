@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Organization QA Standards (default baseline).
+# A project may override this with `.aiqa/standards.yaml` inside its repository.
+# The Standards/Governance Agent enforces these on every generated artifact.
+# ─────────────────────────────────────────────────────────────────────────────
+version: 1
+organization: "Default Org"
+
+framework:
+  language: typescript          # typescript | python | java
+  runner: playwright
+  bdd: true
+  pattern: page-object-model
+
+layout:
+  features_dir: "tests/features"
+  steps_dir: "tests/steps"
+  pages_dir: "tests/pages"
+  fixtures_dir: "tests/fixtures"
+  utils_dir: "tests/utils"
+  data_dir: "tests/data"
+  api_dir: "tests/api"
+
+naming:
+  feature_file: "kebab-case.feature"
+  page_object_class: "PascalCasePage"
+  page_object_file: "PascalCasePage.ts"
+  step_file: "kebab-case.steps.ts"
+  test_id_prefix: "TC-"
+  scenario_must_have_tag: true
+
+locators:
+  strategy_priority:
+    - getByTestId
+    - getByRole
+    - getByLabel
+    - getByPlaceholder
+    - getByText
+    - css
+    - xpath
+  forbid_absolute_xpath: true
+  forbid_nth_child_chains: true
+  require_data_testid_when_available: true
+
+rules:
+  - id: STD-001
+    severity: error
+    title: "No hard waits"
+    applies_to: [steps, pages, tests]
+    detect: '(waitForTimeout\s*\(|Thread\.sleep|time\.sleep\s*\()'
+    message: "Use web-first assertions or explicit waits instead of fixed sleeps."
+    autofix: strip_hard_wait
+
+  - id: STD-002
+    severity: error
+    title: "No absolute XPath locators"
+    applies_to: [pages, steps, tests]
+    detect: '(locator\(\s*[''"]/html|xpath=/html|[''"]//\*\[)'
+    message: "Absolute XPath is brittle. Use getByTestId/getByRole."
+
+  - id: STD-003
+    severity: error
+    title: "No raw credentials in test code"
+    applies_to: [pages, steps, tests, fixtures]
+    detect: '(?i)(password|passwd|api[_-]?key|secret|token)\s*[:=]\s*[''"][^''"]{4,}[''"]'
+    message: "Credentials must come from environment/config, never literals."
+
+  - id: STD-004
+    severity: error
+    title: "Selectors belong in Page Objects"
+    applies_to: [steps]
+    detect: '(page\.locator\(|page\.getBy[A-Z]\w*\()'
+    message: "Step definitions must call Page Object methods, not raw locators."
+
+  - id: STD-005
+    severity: warning
+    title: "Scenario must be tagged"
+    applies_to: [features]
+    kind: semantic
+    check: scenario_tagged
+    message: "Every Scenario needs at least one tag (e.g. @smoke, @regression)."
+
+  - id: STD-006
+    severity: warning
+    title: "No console.log in committed tests"
+    applies_to: [pages, steps, tests, fixtures]
+    detect: 'console\.log\('
+    message: "Use the test reporter/logger instead of console.log."
+    autofix: remove_console_log
+
+  - id: STD-007
+    severity: error
+    title: "No conditional assertions"
+    applies_to: [steps, tests]
+    detect: 'if\s*\([^)]*\)\s*\{?\s*(await\s+)?(expect|assert)'
+    message: "Assertions must be unconditional and deterministic."
+
+  - id: STD-008
+    severity: warning
+    title: "Page Object actions must be async"
+    applies_to: [pages]
+    kind: semantic
+    check: page_methods_async
+    message: "Page Object action methods should be declared `async`."
+
+  - id: STD-009
+    severity: error
+    title: "Reuse existing fixtures and utilities"
+    applies_to: [pages, steps, fixtures]
+    kind: semantic
+    check: no_duplicate_helpers
+    message: "Do not redefine a fixture/util that already exists in the repository."
+
+  - id: STD-010
+    severity: warning
+    title: "Max scenario steps"
+    applies_to: [features]
+    kind: semantic
+    check: max_scenario_steps
+    max_steps: 15
+    message: "Scenarios longer than 15 steps should be decomposed."
+
+  - id: STD-011
+    severity: error
+    title: "No .only / .skip left in code"
+    applies_to: [steps, tests, features]
+    detect: '(test\.only\(|describe\.only\(|it\.only\(|@wip\b)'
+    message: "Focused or work-in-progress tests must not be committed."
+
+  - id: STD-012
+    severity: warning
+    title: "Feature must have a Background or explicit preconditions"
+    applies_to: [features]
+    kind: semantic
+    check: feature_has_context
+    message: "Declare preconditions via Background or Given steps."
+
+review:
+  require_human_approval_for:
+    - code_write
+    - git_commit
+    - git_push
+    - self_heal_apply
+    - destructive_command
+  auto_approve_below_risk: low
