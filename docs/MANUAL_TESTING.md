@@ -72,6 +72,18 @@ To register a different repository instead, use **AI QA: Register Project**
 from the Command Palette (`Ctrl+Shift+P`) and the extension fills the id in for
 you.
 
+### Two different keys — do not mix them up
+
+| Key | Looks like | Where it goes |
+|---|---|---|
+| **Control plane key** | `aiqa_...` | the extension prompt, stored in the OS keychain |
+| **LLM provider key** | `sk-or-v1-...` | the server's `.env` — the extension never sees it |
+
+The extension asks for the first one. Pasting an OpenRouter key there is
+refused at the prompt, and any key the server will not accept is refused
+before it is stored. If one was saved before that check existed, run
+**AI QA: Reset API Key**.
+
 Check it worked with **AI QA: Check Connection and Providers**. Every tier
 should show an `openrouter/...:free` model.
 

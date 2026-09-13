@@ -287,6 +287,11 @@
         "command": "aiqa.batchFromEpic",
         "title": "Automate a Jira Epic",
         "category": "AI QA"
+      },
+      {
+        "command": "aiqa.resetApiKey",
+        "title": "Reset API Key",
+        "category": "AI QA"
       }
     ],
     "menus": {

@@ -175,20 +175,94 @@ export class ApiClient {
     }
 
     if (!key && promptIfMissing) {
-      key = await vscode.window.showInputBox({
-        title: 'AI QA Engineer — API key',
-        prompt: 'Paste the control plane API key (from `aiqa init`). Stored in the OS keychain.',
-        password: true,
-        ignoreFocusOut: true,
-        placeHolder: 'aiqa_...',
-      });
+      key = await this.promptForApiKey();
       if (key) {
-        await this.context.secrets.store(SECRET_KEY, key.trim());
+        await this.context.secrets.store(SECRET_KEY, key);
       }
     }
 
     this.cachedKey = key?.trim() || undefined;
     return this.cachedKey;
+  }
+
+  /**
+   * Ask for the control plane key, and refuse the wrong one.
+   *
+   * Two keys are in play and they are easy to confuse: the LLM provider key
+   * (OpenRouter, OpenAI, Anthropic) which belongs in the *server's* `.env`, and
+   * this one, which the extension uses to talk to the control plane. Pasting
+   * the former here used to be accepted silently: it went into the keychain,
+   * every later request came back 401, and the chat appeared to do nothing.
+   *
+   * So the obvious mistake is named at the point it is made, and the key is
+   * checked against the server before it is stored.
+   */
+  private async promptForApiKey(): Promise<string | undefined> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const entered = await vscode.window.showInputBox({
+        title: 'AI QA Engineer — control plane API key',
+        prompt:
+          'The key printed by `aiqa init`. This is NOT your OpenRouter or OpenAI key — ' +
+          'those belong in the server\'s .env file. Stored in the OS keychain.',
+        password: true,
+        ignoreFocusOut: true,
+        placeHolder: 'aiqa_...',
+        validateInput: (value) => {
+          const candidate = value.trim();
+          if (!candidate) {
+            return 'Paste the control plane key.';
+          }
+          if (/^sk-/i.test(candidate)) {
+            return 'That is an LLM provider key (OpenRouter/OpenAI/Anthropic). It belongs in the server\'s .env. This wants the key from `aiqa init`.';
+          }
+          return undefined;
+        },
+      });
+      if (!entered) {
+        return undefined;
+      }
+
+      const candidate = entered.trim();
+      const rejection = await this.rejectionReason(candidate);
+      if (!rejection) {
+        return candidate;
+      }
+      const retry = await vscode.window.showErrorMessage(
+        `AI QA: ${rejection}`,
+        'Try again',
+        'Cancel',
+      );
+      if (retry !== 'Try again') {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Why the server will not accept this key, or empty when it will.
+   *
+   * Deliberately not `/api/health`, which is unauthenticated and answers 200 to
+   * anything — checking against it is how a bad key passes a connection test
+   * and then fails on every real call.
+   */
+  private async rejectionReason(candidate: string): Promise<string> {
+    try {
+      const response = await fetch(`${this.baseUrl}/api/projects`, {
+        headers: { 'X-API-Key': candidate },
+      });
+      if (response.status === 401 || response.status === 403) {
+        return 'the control plane rejected that key. Check the value printed by `aiqa init`.';
+      }
+      if (!response.ok) {
+        return `the control plane answered ${response.status}. Is it the right server?`;
+      }
+      return '';
+    } catch {
+      // Unreachable is not the key's fault; let the caller store it and fail
+      // later with a connection error that says so.
+      return '';
+    }
   }
 
   async clearApiKey(): Promise<void> {
@@ -281,6 +355,17 @@ export class ApiClient {
 
   savingsMetrics(days = 30): Promise<Record<string, any>> {
     return this.request(`/api/metrics/savings?days=${days}`);
+  }
+
+  /** Does the stored key actually work? `health()` cannot tell you. */
+  async verifyCredentials(): Promise<{ ok: boolean; detail: string }> {
+    try {
+      await this.listProjects();
+      return { ok: true, detail: '' };
+    } catch (err) {
+      const error = err as ApiError;
+      return { ok: false, detail: error?.message || String(err) };
+    }
   }
 
   projectKnowledge(projectId: string): Promise<Record<string, any>> {

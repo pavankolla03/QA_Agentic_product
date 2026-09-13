@@ -112,6 +112,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.refresh', () => refreshAll());
   register('aiqa.openDashboard', () => vscode.env.openExternal(vscode.Uri.parse(api.baseUrl)));
   register('aiqa.doctor', () => doctor());
+  register('aiqa.resetApiKey', () => resetApiKey());
   register('aiqa.startServer', () => startServer());
   register('aiqa.stopServer', () => stopServer());
   register('aiqa.restartServer', () => restartServer());
@@ -995,12 +996,32 @@ async function showPipeline(): Promise<void> {
   ]);
 }
 
+/** Forget the stored key so the next action asks for a new one. */
+async function resetApiKey(): Promise<void> {
+  await api.clearApiKey();
+  const picked = await vscode.window.showInformationMessage(
+    'AI QA: the stored API key was cleared. Enter the one from `aiqa init` — not your OpenRouter key.',
+    'Enter it now',
+  );
+  if (picked === 'Enter it now') {
+    const key = await api.getApiKey();
+    if (key) {
+      const check = await api.verifyCredentials();
+      void vscode.window.showInformationMessage(
+        check.ok ? 'AI QA: the key works.' : `AI QA: still refused — ${check.detail}`,
+      );
+      refreshAll();
+    }
+  }
+}
+
 async function doctor(): Promise<void> {
   try {
     const health = await api.health();
     const offline = Object.values(health.active_routes).every(
       (route) => !route || route.provider === 'mock' || route.provider === 'hashing',
     );
+    const credentials = await api.verifyCredentials();
     const routes = Object.entries(health.active_routes)
       .map(([capability, route]) => `  ${capability}: ${route ? `${route.provider}/${route.model}` : 'none'}`)
       .join('\n');
@@ -1010,6 +1031,10 @@ async function doctor(): Promise<void> {
         '# AI QA Engineer — connection check',
         '',
         `Control plane: ${api.baseUrl}`,
+        // `/api/health` is unauthenticated and answers 200 to anything, so a
+        // connection check that stops there passes with a key the server will
+        // refuse on the very next call.
+        `Credentials: ${credentials.ok ? 'accepted' : `REJECTED — ${credentials.detail}`}`,
         `Status: ${health.status} (v${health.version}, env ${health.env}, ${health.database})`,
         `Configured providers: ${health.configured_providers.join(', ')}`,
         '',
