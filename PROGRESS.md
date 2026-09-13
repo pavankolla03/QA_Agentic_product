@@ -34,11 +34,11 @@ for anything deterministic. Do not re-ask an LLM for information the platform al
 | V5 | Standards system (`.aiqa/`) | DONE | config.yaml + standards/*.md + examples/, company→project→module priority, example-based learning, free-text → structured |
 | V6 | Static-first validation pipeline | DONE | tsc + ESLint + Gherkin parser + AST rules; semantic LLM validation only when static passes and risk remains |
 | V7 | Batch test design + reuse-first flow | DONE | one planning call for N scenarios; existing-artifact discovery before generation |
-| V8 | LangGraph orchestrator | DONE | real LangGraph StateGraph + DB-backed checkpointer, conditional edges, loop caps |
+| V8 | LangGraph orchestrator | DONE | real LangGraph StateGraph, declared topology, compile-time validation, draw_mermaid(). **No checkpointer** — state holds a live AgentContext and durability is the `runs` row. Built-in orchestrator kept, with an equivalence test |
 | V9 | Agent permissions | DONE | explicit per-agent capability grants; no unrestricted access |
 | V10 | Cost + management dashboards, success metrics | DONE | cost/scenario, savings vs baseline, coverage, healing accuracy, intervention rate |
 | V11 | VS Code sidebar expansion | DONE | 12 sidebar sections, 13 new commands |
-| V12 | Docs + roadmap to 100% automation | DONE | cost-optimization.md, agents.md, ROADMAP.md |
+| V12 | Docs + roadmap | DONE | cost-optimization.md, ROADMAP.md, README rewritten for v2 |
 
 ## Cost baseline
 
@@ -46,6 +46,15 @@ User-provided benchmark: **~30,000 AI credits for 110 test cases** (≈273 credi
 Targets: −50% initially, then −70…90%. `scripts/benchmark.py` measures against this; do not claim
 savings that have not been measured.
 
+## Verified (v2)
+
+- `pytest tests -q` — 215 tests green
+- `python -m scripts.selfcheck` — all checks passed
+- `python -m scripts.benchmark --runs 5` — index cache 4/4, app map 4/4, 16 duplicate scenarios avoided
+- `ruff check .` — clean · `npm run compile` — clean (34 commands / 12 views, manifest-consistent)
+
 ## Next action
 
-v2 complete. See `docs/ROADMAP.md` for the phased path to higher automation coverage.
+v2 complete. `docs/ROADMAP.md` sequences the next increments; the highest
+value-per-effort items are run-from-CI, coverage-gap analysis, and first-class
+API/DB test generation — none of which need new architecture.
