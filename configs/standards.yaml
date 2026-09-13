@@ -106,7 +106,7 @@ rules:
   - id: STD-009
     severity: error
     title: "Reuse existing fixtures and utilities"
-    applies_to: [pages, steps, fixtures]
+    applies_to: [pages, steps, fixtures, utils, tests]
     kind: semantic
     check: no_duplicate_helpers
     message: "Do not redefine a fixture/util that already exists in the repository."

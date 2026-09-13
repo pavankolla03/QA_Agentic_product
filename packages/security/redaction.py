@@ -87,7 +87,8 @@ class Redactor:
         # Catch-all for `.env`-style assignments whose key *name* looks secret.
         def _env_sub(match: re.Match[str]) -> str:
             key, value = match.group(1), match.group(2)
-            if value.startswith("[REDACTED:"):
+            # The value may already be redacted, possibly still wrapped in quotes.
+            if "[REDACTED:" in value:
                 return match.group(0)
             hits.append("env_assignment")
             return f"{key}={self._placeholder('env', value)}"

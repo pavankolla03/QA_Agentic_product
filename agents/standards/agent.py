@@ -290,8 +290,15 @@ def _check_no_duplicate_helpers(change: FileChange, ctx: AgentContext, rule: dic
         return []
 
     out: SemanticResult = []
+    # A *definition* is an exported binding, or a function/class declaration.
+    # A local `let loginPage: LoginPage;` is a variable that merely *holds* the
+    # reused thing — flagging it would train people to ignore this rule.
     declaration_re = re.compile(
-        r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let)\s+(?P<name>[A-Za-z_$][\w$]*)"
+        r"^\s*(?:"
+        r"export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+"
+        r"|(?:abstract\s+)?class\s+"
+        r"|(?:async\s+)?function\s+"
+        r")(?P<name>[A-Za-z_$][\w$]*)"
     )
     for index, line in enumerate(change.content.splitlines(), start=1):
         match = declaration_re.match(line)

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI QA Engineer — Control Plane</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" class="logo" aria-hidden="true">
+      <path d="M9 3h6M10 3v5.5L5.5 17A2.5 2.5 0 0 0 7.8 20.5h8.4A2.5 2.5 0 0 0 18.5 17L14 8.5V3M7.5 14h9"/>
+    </svg>
+    <div>
+      <strong>AI QA Engineer</strong>
+      <span class="muted" id="envLabel">connecting…</span>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="approvals">Approvals <span class="badge" id="approvalBadge" hidden>0</span></button>
+    <button data-tab="runs">Runs</button>
+    <button data-tab="projects">Projects</button>
+    <button data-tab="cost">Cost &amp; Usage</button>
+    <button data-tab="audit">Audit</button>
+  </nav>
+  <div class="right">
+    <span class="pill" id="spendPill" title="Spend today against the daily ceiling">$0.0000</span>
+    <button class="ghost" id="refreshBtn" title="Refresh">↻</button>
+    <button class="ghost" id="keyBtn" title="Change API key">key</button>
+  </div>
+</header>
+
+<div id="alert" class="alert" hidden></div>
+
+<main>
+  <!-- ------------------------------------------------ overview -->
+  <section data-panel="overview" class="panel">
+    <div class="cards" id="overviewCards"></div>
+
+    <div class="split">
+      <div class="card">
+        <h2>Model routing</h2>
+        <p class="muted small">
+          Agents request a capability; the router resolves it to the first healthy provider.
+          Swapping models is a config change in <code>configs/models.yaml</code>.
+        </p>
+        <table id="routesTable"><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h2>Agent pipeline</h2>
+        <p class="muted small">Each agent has one responsibility. The orchestrator owns control flow.</p>
+        <div id="agentList" class="agent-list"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Recent activity</h2>
+      <div id="recentRuns"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ approvals -->
+  <section data-panel="approvals" class="panel" hidden>
+    <div class="section-head">
+      <h2>Waiting for a human</h2>
+      <p class="muted small">
+        Nothing reaches the workspace, Git, or a repaired test file without a decision here.
+      </p>
+    </div>
+    <div id="approvalList"></div>
+  </section>
+
+  <!-- ------------------------------------------------ runs -->
+  <section data-panel="runs" class="panel" hidden>
+    <div class="section-head">
+      <h2>Runs</h2>
+      <div class="filters">
+        <select id="runProjectFilter"><option value="">All projects</option></select>
+        <select id="runStatusFilter">
+          <option value="">Any status</option>
+          <option value="running">Running</option>
+          <option value="waiting_approval">Waiting approval</option>
+          <option value="succeeded">Succeeded</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+    </div>
+    <div id="runList"></div>
+    <div id="runDetail"></div>
+  </section>
+
+  <!-- ------------------------------------------------ projects -->
+  <section data-panel="projects" class="panel" hidden>
+    <div class="section-head">
+      <h2>Projects</h2>
+      <p class="muted small">
+        A project is a QA automation repository. Indexing teaches the agents its conventions.
+      </p>
+    </div>
+    <div id="projectList"></div>
+  </section>
+
+  <!-- ------------------------------------------------ cost -->
+  <section data-panel="cost" class="panel" hidden>
+    <div class="section-head">
+      <h2>Cost &amp; usage</h2>
+      <div class="filters">
+        <select id="costWindow">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      </div>
+    </div>
+    <div class="cards" id="costCards"></div>
+    <div class="card">
+      <h2>Daily spend</h2>
+      <div id="costChart" class="chart"></div>
+    </div>
+    <div class="split">
+      <div class="card">
+        <h2>By model</h2>
+        <table id="modelTable"><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h2>By agent</h2>
+        <table id="agentCostTable"><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Self-healing</h2>
+      <div id="healingStats"></div>
+    </div>
+    <div class="card">
+      <h2>Flaky tests</h2>
+      <div id="flakyList"></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ audit -->
+  <section data-panel="audit" class="panel" hidden>
+    <div class="section-head">
+      <h2>Audit log</h2>
+      <p class="muted small">
+        Append-only. Every file write, command, commit, approval and policy denial.
+      </p>
+    </div>
+    <div id="auditList"></div>
+  </section>
+</main>
+
+<dialog id="keyDialog">
+  <form method="dialog">
+    <h2>API key</h2>
+    <p class="muted small">
+      Generated by <code>aiqa init</code>. Stored in this browser's local storage only.
+    </p>
+    <input type="password" id="keyInput" placeholder="aiqa_..." autocomplete="off">
+    <div class="dialog-actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button value="save" class="primary" id="keySave">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

@@ -97,8 +97,18 @@ redaction:
       regex: '(?i)bearer\s+[A-Za-z0-9_\-\.=]{20,}'
     - name: connection_string
       regex: '(?i)(postgres|postgresql|mysql|mongodb\+srv|mongodb|redis|amqp)://[^\s''"]+:[^\s''"]+@[^\s''"]+'
+    # A *quoted* value after a secret-looking key is always treated as a literal
+    # credential.
+    - name: password_literal
+      regex: '(?i)[''"]?\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b[''"]?\s*[:=]\s*([''"])([^''"\n]{4,})\2'
+      group: 3
+
+    # An *unquoted* value is redacted only when it is not obviously a type
+    # annotation or an environment lookup. Without these exclusions,
+    # `async login(password: string)` would be rewritten mid-signature and the
+    # code the model sees would no longer compile.
     - name: password_assignment
-      regex: '(?i)\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*[''"]?([^\s''"]{4,})'
+      regex: '(?i)[''"]?\b(password|passwd|pwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token)\b[''"]?\s*[:=]\s*(?!(?:string|number|boolean|any|unknown|str|int|bool|None|null|undefined|true|false|process\.env|os\.environ|os\.getenv|config\.|this\.|self\.)\b)([^\s''"`;,)\]}]{4,})'
       group: 2
     - name: credit_card
       regex: '\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b'

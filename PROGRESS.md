@@ -25,17 +25,17 @@ cd apps/vscode-extension && npm run compile
 | 1 | packages/: types, protocol, security, schemas | DONE | enums+models (pydantic), redaction, WorkspaceGuard/CommandGuard/GitGuard/RBAC — verified |
 | 2 | LLM provider abstraction + model router | DONE | 7 providers, capability routing, health fallback, budget, cost math verified |
 | 3 | Observability + cost tracking (DB models) | DONE | 16 ORM tables, RunTracker spans, daily cost rollup, CostGovernor — verified |
-| 4 | API gateway (FastAPI): auth, projects, runs, WS | TODO | |
+| 4 | API gateway (FastAPI): auth, projects, runs, WS | DONE | hashed API keys, RBAC, 25+ routes, WS stream w/ replay, metrics, audit, CLI |
 | 5 | Knowledge service: repo index + retrieval | DONE | framework/layout/naming detection, symbol extraction, hybrid embed+lexical retrieval — verified on sample repo |
 | 6 | Tool execution layer | DONE | 31 tools; fs confinement, cmd allowlist, git branch protection, read-only SQL, PW explore+run, all guards verified |
 | 7 | Agent engine: orchestrator + 10 agents | DONE | resumable state graph, 6 run modes, durable suspend/resume across approvals |
 | 8 | Execution service: Playwright runs + artifacts | DONE | apply-on-approval, JSON report parsing, flakiness ledger, commit-on-green |
 | 9 | Self-healing + failure analysis loop | DONE | 11 deterministic signatures + LLM triage, product-defect safety override, verify-or-revert |
 | 10 | Notification service (Slack/Teams) | DONE | Slack blocks + Teams adaptive cards, redacted, wired into Reporting agent |
-| 11 | VS Code extension | TODO | |
-| 12 | Control plane web UI | TODO | |
+| 11 | VS Code extension | DONE | 21 commands, 4 tree views, chat webview, diff review, SecretStorage keys, compiles clean |
+| 12 | Control plane web UI | DONE | 6-tab dashboard, approve/reject in browser, cost charts, audit — verified in a real browser |
 | 13 | Infrastructure: docker-compose, CI | TODO | |
-| 14 | Tests + sample target repo fixture | TODO | |
+| 14 | Tests + sample target repo fixture | DONE | 159 tests green (119 unit / 24 integration / 16 e2e) + selfcheck |
 | 15 | Docs + final polish | TODO | |
 
 ## Verified end-to-end (offline, no credentials)
@@ -44,4 +44,4 @@ cd apps/vscode-extension && npm run compile
 6 audit entries, secret redaction + workspace confinement + path-escape all blocked.
 
 ## Next action
-Phase 4: API gateway (FastAPI: auth, projects, runs, approvals, WS stream, metrics), then Phase 11 VS Code extension.
+Phase 13: infrastructure (docker-compose, Dockerfiles, CI workflows), then Phase 15 docs.

@@ -1,0 +1,151 @@
+{
+  "name": "ai-qa-engineer",
+  "displayName": "AI QA Engineer",
+  "description": "Autonomous AI QA engineer: describe a feature, review the generated Playwright + BDD automation, approve, run, self-heal.",
+  "version": "0.1.0",
+  "publisher": "aiqa",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Testing", "AI", "Other"],
+  "keywords": ["qa", "testing", "playwright", "bdd", "automation", "ai", "agent"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiqa",
+          "title": "AI QA Engineer",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aiqa": [
+        { "id": "aiqa.approvals", "name": "Approvals", "icon": "$(check)" },
+        { "id": "aiqa.runs", "name": "Runs", "icon": "$(history)" },
+        { "id": "aiqa.agents", "name": "Agents", "icon": "$(organization)" },
+        { "id": "aiqa.usage", "name": "Usage & Cost", "icon": "$(graph)" }
+      ]
+    },
+    "commands": [
+      { "command": "aiqa.openChat", "title": "AI QA: Open Chat", "icon": "$(comment-discussion)" },
+      { "command": "aiqa.automate", "title": "AI QA: Automate a Feature..." },
+      { "command": "aiqa.planOnly", "title": "AI QA: Design Test Plan Only..." },
+      { "command": "aiqa.generateOnly", "title": "AI QA: Generate Tests (no execution)..." },
+      { "command": "aiqa.runTests", "title": "AI QA: Run Existing Tests" },
+      { "command": "aiqa.healFailures", "title": "AI QA: Diagnose and Self-Heal Failures" },
+      { "command": "aiqa.automateFromJira", "title": "AI QA: Automate from a Jira Issue..." },
+      { "command": "aiqa.registerProject", "title": "AI QA: Register This Workspace as a Project" },
+      { "command": "aiqa.indexRepository", "title": "AI QA: Index Repository (learn conventions)" },
+      { "command": "aiqa.lintStandards", "title": "AI QA: Check Suite Against QA Standards" },
+      { "command": "aiqa.showApprovals", "title": "AI QA: Show Pending Approvals" },
+      { "command": "aiqa.reviewDiff", "title": "AI QA: Review Proposed Changes", "icon": "$(git-compare)" },
+      { "command": "aiqa.approve", "title": "AI QA: Approve", "icon": "$(check)" },
+      { "command": "aiqa.reject", "title": "AI QA: Reject", "icon": "$(x)" },
+      { "command": "aiqa.openRun", "title": "AI QA: Open Run" },
+      { "command": "aiqa.cancelRun", "title": "AI QA: Cancel Run", "icon": "$(stop-circle)" },
+      { "command": "aiqa.showReport", "title": "AI QA: Show Run Report" },
+      { "command": "aiqa.showTrace", "title": "AI QA: Show Agent Trace" },
+      { "command": "aiqa.refresh", "title": "AI QA: Refresh", "icon": "$(refresh)" },
+      { "command": "aiqa.openDashboard", "title": "AI QA: Open Control Plane Dashboard" },
+      { "command": "aiqa.doctor", "title": "AI QA: Check Connection and Providers" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "aiqa.openChat", "when": "view == aiqa.runs", "group": "navigation@1" },
+        { "command": "aiqa.refresh", "when": "view =~ /aiqa\\./", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "aiqa.reviewDiff", "when": "view == aiqa.approvals && viewItem == approval", "group": "inline@1" },
+        { "command": "aiqa.approve", "when": "view == aiqa.approvals && viewItem == approval", "group": "inline@2" },
+        { "command": "aiqa.reject", "when": "view == aiqa.approvals && viewItem == approval", "group": "inline@3" },
+        { "command": "aiqa.showReport", "when": "view == aiqa.runs && viewItem == run", "group": "1@1" },
+        { "command": "aiqa.showTrace", "when": "view == aiqa.runs && viewItem == run", "group": "1@2" },
+        { "command": "aiqa.cancelRun", "when": "view == aiqa.runs && viewItem == run", "group": "inline@1" }
+      ],
+      "commandPalette": [
+        { "command": "aiqa.approve", "when": "false" },
+        { "command": "aiqa.reject", "when": "false" },
+        { "command": "aiqa.openRun", "when": "false" }
+      ]
+    },
+    "configuration": {
+      "title": "AI QA Engineer",
+      "properties": {
+        "aiqa.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8080",
+          "description": "URL of the AI QA control plane."
+        },
+        "aiqa.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "API key for the control plane. Leave blank to be prompted once; the value is then stored in the OS keychain via VS Code SecretStorage rather than in settings."
+        },
+        "aiqa.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "Project id bound to this workspace. Set automatically by 'Register This Workspace as a Project'."
+        },
+        "aiqa.defaultMode": {
+          "type": "string",
+          "enum": ["plan_only", "generate", "full", "autonomous"],
+          "default": "full",
+          "enumDescriptions": [
+            "Design the test plan only — write nothing",
+            "Design and generate code — do not execute",
+            "Generate, execute and analyse failures",
+            "Also self-heal and re-run automatically"
+          ],
+          "description": "Default autonomy level for new runs."
+        },
+        "aiqa.autoApprove": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "**Skips every human approval gate.** Generated code is written and committed without review. Intended for CI only."
+        },
+        "aiqa.maxCostUsd": {
+          "type": "number",
+          "default": 2.0,
+          "description": "Hard spend ceiling for a single run, in USD."
+        },
+        "aiqa.showCostInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the live token/cost counter in the status bar."
+        },
+        "aiqa.openDiffOnApproval": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the proposed changes in the diff editor as soon as an approval is requested."
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "aiqa.openChat",
+        "key": "ctrl+alt+q",
+        "mac": "cmd+alt+q"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "ws": "^8.17.0"
+  }
+}

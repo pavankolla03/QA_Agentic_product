@@ -43,6 +43,8 @@ packages = ["packages", "services", "agents", "tools", "scripts"]
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Domain classes named Test* (TestStatus, TestCaseResult) are not test cases.
+python_classes = ["Check*"]
 filterwarnings = ["ignore::DeprecationWarning"]
 addopts = "-q"
 

@@ -83,12 +83,20 @@ _SIGNATURES: list[tuple[re.Pattern[str], FailureCategory, HealStrategy, float]] 
 ]
 
 # Signals that the *application* produced the wrong answer.
+# DOTALL matters: Playwright prints "Expected string: ...\nReceived string: ..."
+# across two lines, and without it the most common product-defect shape of all
+# would slip through the safety override.
 _PRODUCT_SIGNALS = re.compile(
-    r"(?:expected\s+(?:string|value|pattern)?[:\s].{0,80}received|"
+    r"(?:expected\s+(?:string|value|pattern|substring|array|object)?[:\s].{0,120}received|"
     r"toHaveText|toContainText|toHaveValue|toEqual|toBe\(|"
-    r"expected .* but (?:got|received))",
-    re.I,
+    r"expected .{0,120} but (?:got|received))",
+    re.I | re.DOTALL,
 )
+
+#: Above this confidence a deterministic signature is authoritative and the
+#: model is not consulted for the category at all. A specific regex on a known
+#: framework error message is more reliable than an LLM's impression of it.
+_DETERMINISTIC_TRUST = 0.75
 
 
 class FailureAnalysisAgent(BaseAgent):
@@ -113,10 +121,13 @@ class FailureAnalysisAgent(BaseAgent):
 
         for case in execution.failures[: ctx.metadata.get("max_analyses", 15)]:
             analysis = self._deterministic(ctx, case)
-            if analysis is None or analysis.confidence < 0.85:
+            if analysis is None or analysis.confidence < _DETERMINISTIC_TRUST:
                 model_analysis = await self._ask_model(ctx, case, analysis)
                 if model_analysis is not None:
-                    analysis = model_analysis
+                    # Keep whichever verdict is better supported. A model that is
+                    # less sure than the regex does not get to overrule it.
+                    if analysis is None or model_analysis.confidence >= analysis.confidence:
+                        analysis = model_analysis
             if analysis is None:
                 analysis = FailureAnalysis(
                     run_id=ctx.run_id, test_id=case.test_id or case.name, test_name=case.name,
