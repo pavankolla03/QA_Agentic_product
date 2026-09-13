@@ -1,14 +1,26 @@
-"""Agent protocol — the control-flow vocabulary shared across layers.
+"""Agent protocol — control-flow vocabulary and the permission model.
 
 These live outside ``agents/`` on purpose. The observability layer needs to tell
 "this agent failed" apart from "this agent is waiting for a human", and it must
 do that without importing the agent layer (which imports observability). Putting
 the control-flow signals in a leaf package keeps the dependency graph acyclic.
+
+``permissions`` sits here for the same reason: the tool layer enforces it, and
+the tool layer must not depend on the agents it is protecting against.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from packages.agent_protocol.permissions import (
+    AGENT_PERMISSIONS,
+    TOOL_CAPABILITY,
+    AgentPermissions,
+)
+from packages.agent_protocol.permissions import Capability as AgentCapability
+from packages.agent_protocol.permissions import describe as describe_permissions
+from packages.agent_protocol.permissions import permissions_for
 
 
 class AgentSignal(Exception):
@@ -41,21 +53,15 @@ def is_control_signal(exc: BaseException) -> bool:
     return isinstance(exc, AgentSignal)
 
 
-from packages.agent_protocol.permissions import (  # noqa: E402,F401
-    AGENT_PERMISSIONS,
-    TOOL_CAPABILITY,
-    AgentPermissions,
-    permissions_for,
-)
-from packages.agent_protocol.permissions import (
-    Capability as AgentCapability,
-)
-from packages.agent_protocol.permissions import (
-    describe as describe_permissions,
-)
-
 __all__ = [
-    "AgentSignal", "ApprovalRequired", "AgentFailure", "is_control_signal",
-    "AGENT_PERMISSIONS", "TOOL_CAPABILITY", "AgentPermissions", "AgentCapability",
-    "describe_permissions", "permissions_for",
+    "AGENT_PERMISSIONS",
+    "TOOL_CAPABILITY",
+    "AgentCapability",
+    "AgentFailure",
+    "AgentPermissions",
+    "AgentSignal",
+    "ApprovalRequired",
+    "describe_permissions",
+    "is_control_signal",
+    "permissions_for",
 ]
