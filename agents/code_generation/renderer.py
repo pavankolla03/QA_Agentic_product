@@ -153,6 +153,15 @@ def render_page_object(plan: PagePlan, *, unverified: set[str] | None = None) ->
     if not plan.base_class:
         lines.append("  constructor(private readonly page: Page) {}")
         lines.append("")
+        # A page with a base class inherits `goto()`. One without must provide
+        # it, because the step renderer calls `goto()` on every page it sets up
+        # — and a repository with no BasePage is exactly the from-scratch case
+        # where nothing else would supply it.
+        if not any(m.name == "goto" for m in plan.methods):
+            lines.append("  async goto(): Promise<void> {")
+            lines.append("    await this.page.goto(this.path);")
+            lines.append("  }")
+            lines.append("")
 
     # ---- locators: private getters, never inline in a method --------------- #
     if plan.locators:

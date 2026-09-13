@@ -430,3 +430,35 @@ def test_a_setup_step_still_constructs_eagerly_and_navigates() -> None:
     assert "loginPage = new LoginPage(this.page);" in source
     assert "await loginPage.goto();" in source
     assert "??=" not in source
+
+
+def test_a_page_without_a_base_class_provides_its_own_goto() -> None:
+    """The step renderer calls `goto()` on every page it sets up.
+
+    With a BasePage that is inherited. In a repository that has none — the
+    from-scratch case — nothing supplied it, so the generated step called a
+    method that did not exist.
+    """
+    page = PagePlan(
+        class_name="LoginPage",
+        route="/login",
+        base_class="",
+        locators={"username": "getByTestId('u')"},
+        methods=[MethodPlan(name="login", kind="action", params=["username"], locators=["username"])],
+    )
+    source = render_page_object(page)
+
+    assert "async goto(): Promise<void> {" in source
+    assert "await this.page.goto(this.path);" in source
+
+    steps = render_steps(
+        [StepPlan(text="I am on the login page", keyword="Given", page="LoginPage", setup=True)],
+        [page],
+    )
+    called = "await loginPage.goto();" in steps
+    assert called and "async goto()" in source, "the step calls it, so the class must declare it"
+
+
+def test_a_page_with_a_base_class_does_not_redeclare_goto() -> None:
+    page = PagePlan(class_name="LoginPage", base_class="BasePage", methods=[])
+    assert "async goto()" not in render_page_object(page)
