@@ -178,6 +178,65 @@ Playwright is not installed"*, which is accurate rather than a failure.
 
 ---
 
+## Testing any page of your own
+
+Nothing above is specific to the demo app. To point it at some page X:
+
+**1. Make a repository for the tests.** It can be completely empty — this was
+verified from scratch. If it already has Playwright tests, better: the platform
+copies the conventions it finds instead of inventing its own.
+
+```bash
+mkdir C:\path\to\x-tests && cd C:\path\to\x-tests && git init
+```
+
+**2. Register it against the page.**
+
+```bash
+.venv/Scripts/python.exe -m services.api_gateway.cli project add "x-app" "C:\path\to\x-tests" --base-url "https://your-app.example.com/the/page"
+```
+
+A deep link is fine. The crawler starts there and follows the links it finds, so
+pointing at `/residents/new` also discovered the login page that links back to
+it. The command prints a project id.
+
+**3. Point the extension at it.** Set `aiqa.projectId` to that id
+(`Ctrl+,` → search `aiqa`), or run **AI QA: Register Project** from the Command
+Palette, which does both steps and fills the id in for you.
+
+**4. Run it.** Palette → **AI QA: Automate** → describe the feature in the terms
+your team uses:
+
+> Automate the resident registration form: valid submission, required-field
+> validation, and duplicate email rejection
+
+Naming the cases you care about matters more than the wording. "Test the page"
+produces a vague plan; the sentence above produces the three scenarios asked
+for.
+
+**5. Review the plan, then approve.** Nothing reaches disk before you do.
+
+### What decides whether this works well
+
+| | |
+|---|---|
+| **`data-testid` attributes** | The single biggest factor. With them the locators are stable. Without, it falls back to text and role selectors, which break when copy changes. |
+| **Reachable without login** | The crawler has no credentials. If the page sits behind auth it sees the login screen and nothing else: the catalogue comes back nearly empty and generation degrades to scaffolding. |
+| **An existing test suite** | Optional but valuable — base classes, fixtures and naming are detected and reused rather than reinvented. |
+
+The login limitation is the one most likely to bite you. There is no
+authenticated-crawl support yet, so test a publicly reachable page first to see
+the pipeline work end to end.
+
+### A note on other people's sites
+
+Point this at applications you own or are authorised to test. It sends real
+requests, and the exploratory pass deliberately submits empty forms. Sites
+published specifically for automation practice are fine; someone else's
+production app is not.
+
+---
+
 ## Cost safety
 
 Your two keys are in `.env`, which is gitignored and on the tool layer's deny
