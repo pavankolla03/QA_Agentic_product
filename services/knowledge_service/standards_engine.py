@@ -269,11 +269,9 @@ def parse_freeform_standards(text: str) -> tuple[list[dict[str, Any]], list[str]
     """
     rules: list[dict[str, Any]] = []
     unparsed: list[str] = []
+    seen_ids: set[str] = set()
 
-    for raw_line in (text or "").splitlines():
-        line = raw_line.strip().strip("-*•").strip().strip('"')
-        if not line or len(line) < 8:
-            continue
+    for line in _statements(text):
 
         matched = False
         for pattern, template in _PROSE_PATTERNS:
@@ -292,7 +290,12 @@ def parse_freeform_standards(text: str) -> tuple[list[dict[str, Any]], list[str]
                 rule["base_class"] = groups["base"]
             if groups.get("tags"):
                 rule["required_tags"] = re.findall(r"@\w+", groups["tags"])
-            rules.append(rule)
+            # Two statements can map onto the same underlying rule (for example
+            # "steps cannot contain locators" and "the Page Object owns all UI
+            # interactions"). Keep the first; a duplicate id would overwrite it.
+            if rule["id"] not in seen_ids:
+                seen_ids.add(rule["id"])
+                rules.append(rule)
             matched = True
             break
 
@@ -300,6 +303,30 @@ def parse_freeform_standards(text: str) -> tuple[list[dict[str, Any]], list[str]
             unparsed.append(line)
 
     return rules, unparsed
+
+
+#: Sentence terminators that end a standards statement. Kept narrow so a
+#: version number or a file extension does not split a sentence in half.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.;!?])\s+(?=[A-Z@\"'])")
+
+
+def _statements(text: str) -> list[str]:
+    """Split pasted prose into individual statements.
+
+    Teams write standards as bullet lists *and* as paragraphs. Splitting on
+    newlines alone silently dropped every rule after the first in a pasted
+    paragraph, so sentences are split too.
+    """
+    out: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip().strip("-*•").strip().strip('"')
+        if not line or line.startswith("#"):
+            continue
+        for sentence in _SENTENCE_SPLIT.split(line):
+            cleaned = sentence.strip().strip('"').strip()
+            if len(cleaned) >= 8:
+                out.append(cleaned)
+    return out
 
 
 # =========================================================================== #

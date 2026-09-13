@@ -11,14 +11,25 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ApiClient, ApiError, Approval, RunMode } from './client/apiClient';
 import { ChatPanel, showDiffDocument } from './panels/chatPanel';
-import { AgentsProvider, ApprovalItem, ApprovalsProvider, AgentsProvider as _A, RunsProvider, UsageProvider } from './views/trees';
+import { AgentsProvider, ApprovalItem, ApprovalsProvider, RunsProvider } from './views/trees';
+import {
+  ActivityProvider,
+  AssistantProvider,
+  ConfigurationProvider,
+  CostsProvider,
+  FailuresProvider,
+  HealingProvider,
+  KnowledgeProvider,
+  ReportsProvider,
+  StandardsProvider,
+} from './views/panels';
 
 let api: ApiClient;
 let statusBar: vscode.StatusBarItem;
 let approvalsProvider: ApprovalsProvider;
 let runsProvider: RunsProvider;
 let agentsProvider: AgentsProvider;
-let usageProvider: UsageProvider;
+let panels: { refresh(): void }[] = [];
 let output: vscode.LogOutputChannel;
 let pollTimer: NodeJS.Timeout | undefined;
 
@@ -33,13 +44,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   approvalsProvider = new ApprovalsProvider(api);
   runsProvider = new RunsProvider(api, projectId);
   agentsProvider = new AgentsProvider(api);
-  usageProvider = new UsageProvider(api);
+
+  const assistant = new AssistantProvider(api);
+  const failures = new FailuresProvider(api);
+  const healing = new HealingProvider(api);
+  const activity = new ActivityProvider(api);
+  const knowledge = new KnowledgeProvider(api);
+  const standards = new StandardsProvider(api);
+  const costs = new CostsProvider(api);
+  const reports = new ReportsProvider(api);
+  const configuration = new ConfigurationProvider(api);
+  panels = [assistant, failures, healing, activity, knowledge, standards, costs, reports, configuration];
 
   context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('aiqa.assistant', assistant),
     vscode.window.registerTreeDataProvider('aiqa.approvals', approvalsProvider),
     vscode.window.registerTreeDataProvider('aiqa.runs', runsProvider),
+    vscode.window.registerTreeDataProvider('aiqa.failures', failures),
+    vscode.window.registerTreeDataProvider('aiqa.healing', healing),
+    vscode.window.registerTreeDataProvider('aiqa.activity', activity),
+    vscode.window.registerTreeDataProvider('aiqa.knowledge', knowledge),
+    vscode.window.registerTreeDataProvider('aiqa.standards', standards),
+    vscode.window.registerTreeDataProvider('aiqa.costs', costs),
     vscode.window.registerTreeDataProvider('aiqa.agents', agentsProvider),
-    vscode.window.registerTreeDataProvider('aiqa.usage', usageProvider),
+    vscode.window.registerTreeDataProvider('aiqa.reports', reports),
+    vscode.window.registerTreeDataProvider('aiqa.configuration', configuration),
     output,
   );
 
@@ -76,6 +105,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.refresh', () => refreshAll());
   register('aiqa.openDashboard', () => vscode.env.openExternal(vscode.Uri.parse(api.baseUrl)));
   register('aiqa.doctor', () => doctor());
+
+  // ---- v2 commands ------------------------------------------------- //
+  register('aiqa.generateAutomation', () => promptAndRun(context, config().get<RunMode>('defaultMode', 'full')));
+  register('aiqa.exploreApplication', () => exploreApplication(context));
+  register('aiqa.generateGherkin', () => promptAndRun(context, 'plan_only'));
+  register('aiqa.generatePageObject', () => generateArtifact(context, 'Page Object'));
+  register('aiqa.generateSteps', () => generateArtifact(context, 'step definitions'));
+  register('aiqa.analyzeFailure', () => analyzeFailure());
+  register('aiqa.selfHeal', () => quickRun(context, 'heal_only', 'Diagnose and repair failing tests'));
+  register('aiqa.validateStandards', () => lintStandards());
+  register('aiqa.showCost', () => showCost());
+  register('aiqa.generateReport', () => showReport());
+  register('aiqa.showKnowledge', () => showKnowledge());
+  register('aiqa.initStandards', () => initStandards());
+  register('aiqa.showPipeline', () => showPipeline());
 
   // Re-read trees when the binding changes.
   context.subscriptions.push(
@@ -489,6 +533,230 @@ async function showTrace(item?: { run?: { id: string } } | string): Promise<void
   await vscode.window.showTextDocument(document, { preview: false });
 }
 
+async function exploreApplication(context: vscode.ExtensionContext): Promise<void> {
+  const panel = await openChat(context);
+  await panel.startRun('Explore the application and refresh the application map', 'plan_only', {
+    max_explore_pages: 10,
+  });
+}
+
+async function generateArtifact(context: vscode.ExtensionContext, artifact: string): Promise<void> {
+  const feature = await vscode.window.showInputBox({
+    title: `AI QA - generate ${artifact}`,
+    prompt: `Which feature or page should the ${artifact} cover?`,
+    ignoreFocusOut: true,
+  });
+  if (!feature) {
+    return;
+  }
+  const panel = await openChat(context);
+  await panel.startRun(`Generate ${artifact} for ${feature.trim()}`, 'generate');
+}
+
+async function analyzeFailure(): Promise<void> {
+  const runs = await api.listRuns(projectId() || undefined, 20);
+  const failing = runs.filter((r) => r.tests_failed > 0);
+  if (!failing.length) {
+    void vscode.window.showInformationMessage('AI QA: no failing runs to analyse.');
+    return;
+  }
+  const picked = await vscode.window.showQuickPick(
+    failing.map((r) => ({
+      label: r.instruction.slice(0, 70),
+      description: `${r.tests_failed} failing`,
+      id: r.id,
+    })),
+    { title: 'Analyse failures from which run?' },
+  );
+  if (picked) {
+    await showTrace(picked.id);
+  }
+}
+
+async function openMarkdown(lines: string[]): Promise<void> {
+  const document = await vscode.workspace.openTextDocument({
+    content: lines.join('\n'),
+    language: 'markdown',
+  });
+  await vscode.window.showTextDocument(document, { preview: false });
+  await vscode.commands.executeCommand('markdown.showPreviewToSide');
+}
+
+async function showCost(): Promise<void> {
+  const [cost, savings, management] = await Promise.all([
+    api.costMetrics(30),
+    api.savingsMetrics(30),
+    api.managementMetrics(30),
+  ]);
+  const totals = cost.totals ?? {};
+  const unit = cost.unit_economics ?? {};
+
+  await openMarkdown([
+    '# AI QA - cost report (30 days)',
+    '',
+    '## Totals',
+    '',
+    '| | |',
+    '| --- | --- |',
+    `| Runs | ${totals.runs ?? 0} |`,
+    `| Scenarios generated | ${totals.scenarios ?? 0} |`,
+    `| LLM requests | ${totals.llm_requests ?? 0} |`,
+    `| Input tokens | ${Number(totals.input_tokens ?? 0).toLocaleString()} |`,
+    `| Output tokens | ${Number(totals.output_tokens ?? 0).toLocaleString()} |`,
+    `| Free-model share | ${totals.free_call_share_pct ?? 0}% |`,
+    `| **Total cost** | **$${Number(totals.total_cost_usd ?? 0).toFixed(4)}** |`,
+    '',
+    '## Unit economics',
+    '',
+    `- Cost per scenario: **$${Number(unit.cost_per_scenario_usd ?? 0).toFixed(5)}**`,
+    `- Cost per successful automation: $${Number(unit.cost_per_successful_automation_usd ?? 0).toFixed(5)}`,
+    `- Requests per scenario: ${unit.requests_per_scenario ?? 0}`,
+    `- Tokens per scenario: ${Number(unit.tokens_per_scenario ?? 0).toLocaleString()}`,
+    '',
+    '## What the knowledge layer avoided',
+    '',
+    `- Repository index cache hit rate: ${savings.repository_cache_hit_rate_pct ?? 0}%`,
+    `- Application map hit rate: ${savings.application_map_hit_rate_pct ?? 0}%`,
+    `- Duplicate scenarios avoided: ${savings.duplicate_scenarios_avoided ?? 0}`,
+    `- Context tokens never sent: ${Number(savings.context_tokens_avoided ?? 0).toLocaleString()}`,
+    '',
+    `_${savings.interpretation ?? ''}_`,
+    '',
+    '## By model',
+    '',
+    '| Model | Calls | Tokens | Cost |',
+    '| --- | --- | --- | --- |',
+    ...Object.entries(cost.by_model ?? {}).map(
+      ([model, s]: [string, any]) =>
+        `| ${model} | ${s.calls} | ${Number(s.tokens).toLocaleString()} | $${Number(s.cost_usd).toFixed(6)} |`,
+    ),
+    '',
+    '## By agent',
+    '',
+    '| Agent | Calls | Tokens | Cost |',
+    '| --- | --- | --- | --- |',
+    ...Object.entries(cost.by_agent ?? {}).map(
+      ([agent, s]: [string, any]) =>
+        `| ${agent} | ${s.calls} | ${Number(s.tokens).toLocaleString()} | $${Number(s.cost_usd).toFixed(6)} |`,
+    ),
+    '',
+    '## Impact estimate',
+    '',
+    `- Hours saved (estimate): ${management.estimated_impact?.hours_saved_estimate ?? 0}`,
+    `- _${management.estimated_impact?.assumption ?? ''}_`,
+    '',
+    `> ${cost.baseline_comparison?.note ?? ''}`,
+  ]);
+}
+
+async function showKnowledge(): Promise<void> {
+  const id = projectId();
+  if (!id) {
+    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    return;
+  }
+  const knowledge = await api.projectKnowledge(id);
+  const repo = knowledge.repository_map;
+  const app = knowledge.application_map;
+
+  const lines: string[] = [
+    `# AI QA - what the platform knows about ${knowledge.project}`,
+    '',
+    'This is the knowledge that makes later runs cheap. Nothing here is re-derived',
+    'unless it has genuinely changed.',
+    '',
+    '## Repository map',
+    '',
+  ];
+  if (repo) {
+    lines.push(
+      `- Files indexed: ${repo.files}`,
+      `- Page objects: ${repo.pages} - fixtures: ${repo.fixtures} - steps: ${repo.steps}`,
+      `- Indexed at commit: \`${repo.git_commit}\``,
+    );
+  } else {
+    lines.push('_Not indexed yet - run **AI QA: Index Repository**._');
+  }
+
+  lines.push('', '## Application map', '');
+  if (app) {
+    lines.push(
+      `- Routes known: ${app.pages}`,
+      `- Locators: ${app.trusted_locators} trusted of ${app.locators} (avg confidence ${app.avg_confidence})`,
+      `- Components detected: ${app.components}`,
+      '',
+      '### Routes',
+      ...((knowledge.known_routes ?? []) as string[]).map((r) => `- \`${r}\``),
+      '',
+      '### Reusable components',
+      ...((knowledge.components ?? []) as string[]).map((c) => `- ${c}`),
+    );
+  } else {
+    lines.push('_Not explored yet - run **AI QA: Explore Application**._');
+  }
+
+  lines.push(
+    '',
+    '## Test knowledge',
+    '',
+    `- Tests remembered: ${knowledge.test_knowledge?.tests_known ?? 0}`,
+    `- Features: ${knowledge.test_knowledge?.features ?? 0}`,
+    `- Page objects referenced: ${knowledge.test_knowledge?.page_objects ?? 0}`,
+    '',
+    '## QA knowledge graph',
+    '',
+    `- Nodes: ${knowledge.knowledge_graph?.nodes ?? 0} - edges: ${knowledge.knowledge_graph?.edges ?? 0}`,
+    `- Requirement coverage: ${knowledge.knowledge_graph?.coverage_pct ?? 0}%`,
+  );
+  await openMarkdown(lines);
+}
+
+async function initStandards(): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showWarningMessage('AI QA: open a repository first.');
+    return;
+  }
+  const confirmed = await vscode.window.showInformationMessage(
+    'Create a starter .aiqa/ with config.yaml, standards/*.md and an examples/ folder?',
+    {
+      modal: true,
+      detail:
+        'Existing files are left untouched. Drop your own Page Object and feature file into .aiqa/examples/ so the platform can learn your house style.',
+    },
+    'Create',
+  );
+  if (confirmed !== 'Create') {
+    return;
+  }
+  const terminal = vscode.window.createTerminal('AI QA');
+  terminal.show();
+  terminal.sendText('python -m services.api_gateway.cli standards init');
+}
+
+async function showPipeline(): Promise<void> {
+  const [graph, permissions] = await Promise.all([api.pipeline(), api.agentPermissions()]);
+  await openMarkdown([
+    '# AI QA - agent pipeline',
+    '',
+    `Backend: \`${graph.backend}\` (LangGraph available: ${graph.langgraph_available})`,
+    '',
+    '```mermaid',
+    String(graph.mermaid ?? '').trim(),
+    '```',
+    '',
+    '## Agent permissions',
+    '',
+    'Least privilege, enforced at the tool boundary and audited on refusal.',
+    '',
+    '| Agent | Capabilities |',
+    '| --- | --- |',
+    ...((permissions.agents ?? []) as any[]).map(
+      (a) => `| ${a.agent} | ${(a.capabilities ?? []).join(', ')} |`,
+    ),
+  ]);
+}
+
 async function doctor(): Promise<void> {
   try {
     const health = await api.health();
@@ -576,7 +844,7 @@ function refreshAll(): void {
   approvalsProvider.refresh();
   runsProvider.refresh();
   agentsProvider.refresh();
-  usageProvider.refresh();
+  panels.forEach((panel) => panel.refresh());
   void updateStatusBar();
 }
 

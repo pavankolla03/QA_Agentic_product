@@ -185,64 +185,6 @@ export class AgentsProvider implements vscode.TreeDataProvider<vscode.TreeItem> 
   }
 }
 
-export class UsageProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private readonly emitter = new vscode.EventEmitter<vscode.TreeItem | undefined>();
-  readonly onDidChangeTreeData = this.emitter.event;
-
-  constructor(private readonly api: ApiClient) {}
-
-  refresh(): void {
-    this.emitter.fire(undefined);
-  }
-
-  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
-    return element;
-  }
-
-  async getChildren(): Promise<vscode.TreeItem[]> {
-    try {
-      const metrics = await this.api.metrics(30);
-      const cost = metrics.cost ?? {};
-      const governance = cost.governance ?? {};
-      const tests = metrics.tests ?? {};
-      const healing = metrics.self_healing ?? {};
-
-      const rows: [string, string, string][] = [
-        ['Runs (30d)', String(metrics.runs?.total ?? 0), 'history'],
-        ['Scenarios generated', String(tests.scenarios_generated ?? 0), 'list-tree'],
-        ['Test pass rate', `${tests.pass_rate_pct ?? 0}%`, 'pass'],
-        ['Files generated', String(tests.files_generated ?? 0), 'file-code'],
-        ['Self-heals verified', `${healing.verified ?? 0}/${healing.proposed ?? 0}`, 'wrench'],
-        ['Spend (30d)', `$${(cost.total_usd ?? 0).toFixed(4)}`, 'credit-card'],
-        ['Tokens (30d)', Number(cost.total_tokens ?? 0).toLocaleString(), 'symbol-numeric'],
-        ['Today', `$${(governance.spent_today_usd ?? 0).toFixed(4)} of $${governance.daily_limit_usd ?? 0}`, 'calendar'],
-        ['This month', `$${(governance.spent_month_usd ?? 0).toFixed(4)} of $${governance.monthly_limit_usd ?? 0}`, 'graph-line'],
-      ];
-
-      const items = rows.map(([label, value, icon]) => {
-        const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-        item.description = value;
-        item.iconPath = new vscode.ThemeIcon(icon);
-        return item;
-      });
-
-      const flaky = (metrics.flaky_tests ?? []) as { test_id: string; flake_rate_pct: number }[];
-      if (flaky.length) {
-        const header = new vscode.TreeItem(`Flaky tests (${flaky.length})`, vscode.TreeItemCollapsibleState.None);
-        header.iconPath = new vscode.ThemeIcon('alert', new vscode.ThemeColor('charts.yellow'));
-        header.description = flaky
-          .slice(0, 3)
-          .map((f) => `${f.test_id} ${f.flake_rate_pct}%`)
-          .join(', ');
-        items.push(header);
-      }
-      return items;
-    } catch {
-      return [placeholder('Not connected', 'debug-disconnect')];
-    }
-  }
-}
-
 function placeholder(text: string, icon: string): vscode.TreeItem {
   const item = new vscode.TreeItem(text, vscode.TreeItemCollapsibleState.None);
   item.iconPath = new vscode.ThemeIcon(icon);

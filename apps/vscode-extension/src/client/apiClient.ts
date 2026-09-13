@@ -271,6 +271,30 @@ export class ApiClient {
     return this.request(`/api/metrics?days=${days}`);
   }
 
+  costMetrics(days = 30): Promise<Record<string, any>> {
+    return this.request(`/api/metrics/cost?days=${days}`);
+  }
+
+  managementMetrics(days = 30): Promise<Record<string, any>> {
+    return this.request(`/api/metrics/management?days=${days}`);
+  }
+
+  savingsMetrics(days = 30): Promise<Record<string, any>> {
+    return this.request(`/api/metrics/savings?days=${days}`);
+  }
+
+  projectKnowledge(projectId: string): Promise<Record<string, any>> {
+    return this.request(`/api/projects/${projectId}/knowledge`);
+  }
+
+  agentPermissions(): Promise<Record<string, any>> {
+    return this.request('/api/permissions');
+  }
+
+  pipeline(): Promise<Record<string, any>> {
+    return this.request('/api/graph');
+  }
+
   // -- projects ------------------------------------------------------- //
   listProjects(): Promise<Project[]> {
     return this.request<Project[]>('/api/projects');

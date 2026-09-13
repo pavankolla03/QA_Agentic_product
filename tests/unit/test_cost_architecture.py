@@ -434,3 +434,27 @@ def test_misplaced_files_are_caught(repo_copy) -> None:
     ).run([FileChange(path="src/WrongPlacePage.ts", kind=ArtifactKind.PAGE_OBJECT, content="export class X {}")])
     assert not report.passed
     assert any(v.rule_id == "STR-001" for v in report.violations)
+
+
+def test_prose_standards_split_on_sentences_not_just_lines() -> None:
+    """Regression: a pasted paragraph lost every rule after the first."""
+    from services.knowledge_service.standards_engine import parse_freeform_standards
+
+    rules, unparsed = parse_freeform_standards(
+        "Steps cannot contain locators. Never use absolute xpath. "
+        "Every scenario must be tagged. Our team likes tabs over spaces."
+    )
+    ids = {r["id"] for r in rules}
+    assert {"STD-004", "STD-002", "STD-005"} <= ids
+    assert unparsed == ["Our team likes tabs over spaces."]
+
+
+def test_duplicate_rule_ids_are_not_emitted_twice() -> None:
+    """Two phrasings of the same rule must not produce two conflicting entries."""
+    from services.knowledge_service.standards_engine import parse_freeform_standards
+
+    rules, _ = parse_freeform_standards(
+        "Steps cannot contain locators.\nThe Page Object must contain all UI interactions.\n"
+    )
+    ids = [r["id"] for r in rules]
+    assert len(ids) == len(set(ids))

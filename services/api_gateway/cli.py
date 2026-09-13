@@ -29,8 +29,14 @@ app = typer.Typer(
 )
 project_app = typer.Typer(help="Manage QA repositories.", no_args_is_help=True)
 run_app = typer.Typer(help="Create and inspect runs.", no_args_is_help=True)
+standards_app = typer.Typer(help="Organization and project QA standards.", no_args_is_help=True)
+knowledge_app = typer.Typer(help="Inspect what the platform knows.", no_args_is_help=True)
+cost_app = typer.Typer(help="Cost and savings reporting.", no_args_is_help=True)
 app.add_typer(project_app, name="project")
 app.add_typer(run_app, name="run")
+app.add_typer(standards_app, name="standards")
+app.add_typer(knowledge_app, name="knowledge")
+app.add_typer(cost_app, name="cost")
 
 # When output is piped (scripts, CI), Rich has no terminal width to measure and
 # falls back to 80 columns — which silently truncates ids that users need to copy.
@@ -504,6 +510,283 @@ def metrics(days: int = typer.Option(30, help="Window in days")) -> None:
         "governance": CostGovernor().snapshot(),
     }
     console.print_json(json.dumps(payload))
+
+
+# =========================================================================== #
+@standards_app.command("init")
+def standards_init(
+    path: str = typer.Argument(".", help="Repository to scaffold"),
+    force: bool = typer.Option(False, help="Overwrite existing files"),
+) -> None:
+    """Create a starter `.aiqa/` with config, prose standards and an examples folder."""
+    from services.knowledge_service.standards_engine import StandardsEngine
+
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        console.print(f"[red]not a directory:[/red] {root}")
+        raise typer.Exit(1)
+
+    created = StandardsEngine(root).scaffold(force=force)
+    if created:
+        console.print(f"[green]created {len(created)} file(s)[/green] under {root / '.aiqa'}")
+        for name in created:
+            console.print(f"  {name}")
+    else:
+        console.print("[dim].aiqa already exists - nothing to do (use --force to overwrite)[/dim]")
+
+    console.print(
+        Panel.fit(
+            "Next:\n"
+            "  1. Edit .aiqa/standards/*.md in your own words - recognised phrasings become rules.\n"
+            "  2. Copy a real Page Object, feature file and steps file into .aiqa/examples/.\n"
+            "     The platform learns your naming, structure and locator style from them.\n"
+            "  3. Run `aiqa standards show` to see what it resolved.",
+            border_style="cyan",
+        )
+    )
+
+
+@standards_app.command("show")
+def standards_show(
+    path: str = typer.Argument(".", help="Repository to inspect"),
+    module: str = typer.Option("", help="Module-level overrides to apply"),
+) -> None:
+    """Show the merged standards actually in force, and where each part came from."""
+    from services.knowledge_service.standards_engine import StandardsEngine
+
+    root = Path(path).expanduser().resolve()
+    resolved = StandardsEngine(root).resolve(module=module)
+
+    console.print(Panel.fit("[bold]Sources (later wins)[/bold]", border_style="cyan"))
+    for source in resolved.sources:
+        console.print(f"  {source}")
+
+    table = Table("rule", "severity", "applies to", "title")
+    for rule in resolved.rules[:40]:
+        applies = rule.get("applies_to")
+        table.add_row(
+            str(rule.get("id", "")),
+            str(rule.get("severity", "")),
+            ", ".join(applies) if isinstance(applies, list) else str(applies or "all"),
+            str(rule.get("title", rule.get("message", "")))[:56],
+        )
+    console.print(table)
+
+    if resolved.house_style.examples_analysed:
+        console.print(Panel(resolved.house_style.briefing(), title="learned house style", border_style="dim"))
+    else:
+        console.print(
+            "[yellow]No examples found.[/yellow] Drop real files into .aiqa/examples/ so the "
+            "platform can learn your conventions instead of guessing."
+        )
+
+    if resolved.unparsed_prose:
+        console.print("\n[yellow]Prose that could not be turned into rules:[/yellow]")
+        for line in resolved.unparsed_prose:
+            console.print(f"  - {line}")
+
+
+@standards_app.command("parse")
+def standards_parse(
+    text: str = typer.Argument(..., help="A standards statement, in your own words"),
+) -> None:
+    """Check whether a prose standard is recognised, before you commit it."""
+    from services.knowledge_service.standards_engine import parse_freeform_standards
+
+    rules, unparsed = parse_freeform_standards(text)
+    if rules:
+        table = Table("rule", "severity", "check", "from")
+        for rule in rules:
+            table.add_row(
+                str(rule.get("id")), str(rule.get("severity")),
+                str(rule.get("check", rule.get("kind", "regex"))), str(rule.get("title", ""))[:50],
+            )
+        console.print(table)
+    for line in unparsed:
+        console.print(f"[yellow]not recognised:[/yellow] {line}")
+        console.print("[dim]  It will be kept as prose context, but not enforced as a rule.[/dim]")
+
+
+# =========================================================================== #
+@knowledge_app.command("show")
+def knowledge_show(project_id: str = typer.Argument(..., help="Project id")) -> None:
+    """What the platform knows - the reason repeat runs are cheap."""
+    _bootstrap()
+    from services.knowledge_service.application_map import ApplicationMap
+    from services.knowledge_service.repository_map import RepositoryMap
+    from services.knowledge_service.test_knowledge import QAKnowledgeGraph, TestKnowledgeStore
+    from services.observability.db import session_scope
+    from services.observability.models import ProjectRow
+
+    with session_scope() as session:
+        row = session.get(ProjectRow, project_id)
+        if row is None:
+            console.print(f"[red]project {project_id} not found[/red]")
+            raise typer.Exit(1)
+        repo_path, name = row.repository_path, row.name
+
+    repo_map = RepositoryMap.load(repo_path)
+    app_map = ApplicationMap.load(repo_path)
+    store = TestKnowledgeStore(project_id)
+    graph = QAKnowledgeGraph(project_id)
+
+    table = Table("layer", "state")
+    table.add_row(
+        "repository map",
+        f"{repo_map.stats()['files']} files @ {repo_map.git_commit[:12]}" if repo_map else "[yellow]not indexed[/yellow]",
+    )
+    if app_map:
+        stats = app_map.stats()
+        table.add_row(
+            "application map",
+            f"{stats['pages']} routes, {stats['trusted_locators']}/{stats['locators']} trusted locators "
+            f"(avg confidence {stats['avg_confidence']}), {stats['components']} components",
+        )
+    else:
+        table.add_row("application map", "[yellow]not explored[/yellow]")
+    table.add_row("test knowledge", f"{store.stats()['tests_known']} test(s) remembered")
+    coverage = graph.coverage()
+    table.add_row("knowledge graph", f"{coverage['nodes']} nodes, {coverage['coverage_pct']}% requirement coverage")
+    console.print(Panel.fit(f"[bold]{name}[/bold]", border_style="cyan"))
+    console.print(table)
+
+    if app_map and app_map.known_routes():
+        console.print("\n[bold]Routes known[/bold]")
+        for route in app_map.known_routes():
+            console.print(f"  {route}")
+    if app_map and app_map.components:
+        console.print("\n[bold]Reusable components[/bold]")
+        for component, entry in app_map.components.items():
+            scope = "shared" if entry.get("shared") else f"{len(entry.get('pages', []))} page"
+            console.print(f"  {component} ({scope})")
+
+
+@knowledge_app.command("reindex")
+def knowledge_reindex(
+    project_id: str = typer.Argument(..., help="Project id"),
+    force: bool = typer.Option(False, help="Ignore caches and rebuild from scratch"),
+) -> None:
+    """Refresh the repository index. Incremental unless --force."""
+    _bootstrap()
+    from services.knowledge_service.incremental import IncrementalIndexer
+    from services.model_router.router import ModelRouter
+    from services.observability.db import session_scope
+    from services.observability.models import ProjectRow
+
+    with session_scope() as session:
+        row = session.get(ProjectRow, project_id)
+        if row is None:
+            console.print(f"[red]project {project_id} not found[/red]")
+            raise typer.Exit(1)
+        repo_path = row.repository_path
+
+    async def _sync():
+        return await IncrementalIndexer(project_id, repo_path).sync(ModelRouter(), force=force)
+
+    with console.status("syncing repository index..."):
+        _profile, delta, repo_map = asyncio.run(_sync())
+    console.print(f"[green]{delta.summary()}[/green]")
+    console.print(f"  {repo_map.stats()}")
+
+
+# =========================================================================== #
+@cost_app.command("report")
+def cost_report(days: int = typer.Option(30, help="Window in days")) -> None:
+    """Cost dashboard: where the money went and what caching avoided."""
+    _bootstrap()
+    from services.observability.metrics import cost_dashboard, savings_report
+
+    cost = cost_dashboard(days=days)
+    savings = savings_report(days=days)
+    totals, unit = cost["totals"], cost["unit_economics"]
+
+    console.print(Panel.fit(f"[bold]Cost report - last {days} days[/bold]", border_style="cyan"))
+    table = Table("metric", "value")
+    table.add_row("runs", str(totals["runs"]))
+    table.add_row("scenarios generated", str(totals["scenarios"]))
+    table.add_row("LLM requests", str(totals["llm_requests"]))
+    table.add_row("input / output tokens", f"{totals['input_tokens']:,} / {totals['output_tokens']:,}")
+    table.add_row("free-model share", f"{totals['free_call_share_pct']}%")
+    table.add_row("total cost", f"${totals['total_cost_usd']:.4f}")
+    table.add_row("cost per scenario", f"${unit['cost_per_scenario_usd']:.5f}")
+    table.add_row("requests per scenario", str(unit["requests_per_scenario"]))
+    table.add_row("tokens per scenario", f"{unit['tokens_per_scenario']:,}")
+    console.print(table)
+
+    saved = Table("what caching avoided", "value")
+    saved.add_row("repository index cache hits", f"{savings['repository_cache_hit_rate_pct']}%")
+    saved.add_row("application map hits", f"{savings['application_map_hit_rate_pct']}%")
+    saved.add_row("duplicate scenarios avoided", str(savings["duplicate_scenarios_avoided"]))
+    saved.add_row("context tokens never sent", f"{savings['context_tokens_avoided']:,}")
+    console.print(saved)
+
+    if cost["by_model"]:
+        models = Table("model", "calls", "tokens", "cost")
+        for model, stats in list(cost["by_model"].items())[:8]:
+            models.add_row(model, str(stats["calls"]), f"{stats['tokens']:,}", f"${stats['cost_usd']:.6f}")
+        console.print(models)
+
+    console.print(f"\n[dim]{cost['baseline_comparison']['note']}[/dim]")
+
+
+@cost_app.command("management")
+def cost_management(days: int = typer.Option(30, help="Window in days")) -> None:
+    """Management dashboard: coverage, pass rate, healing accuracy, intervention."""
+    _bootstrap()
+    from services.observability.metrics import management_dashboard
+
+    data = management_dashboard(days=days)
+    for section in ("automation", "execution", "self_healing", "human_involvement"):
+        table = Table(section.replace("_", " "), "value")
+        for key, value in data[section].items():
+            if key.endswith("note"):
+                continue
+            table.add_row(key.replace("_", " "), str(value))
+        console.print(table)
+    impact = data["estimated_impact"]
+    console.print(
+        Panel(
+            f"Estimated hours saved: {impact['hours_saved_estimate']}\n\n{impact['assumption']}",
+            title="impact (estimate)",
+            border_style="dim",
+        )
+    )
+
+
+@app.command()
+def benchmark(
+    runs: int = typer.Option(4, help="How many runs to measure"),
+    live: bool = typer.Option(False, help="Use configured providers instead of offline mode"),
+) -> None:
+    """Measure the cost of repeat runs against the stated baseline."""
+    from scripts.benchmark import benchmark as run_benchmark
+
+    raise typer.Exit(asyncio.run(run_benchmark(runs=runs, live=live, keep=False)))
+
+
+@app.command()
+def pipeline() -> None:
+    """Print the agent pipeline as Mermaid, rendered from the compiled graph."""
+    from agents.orchestrator.langgraph_graph import build_orchestrator
+
+    orchestrator = build_orchestrator()
+    console.print(f"[bold]backend:[/bold] {type(orchestrator).__name__}")
+    if hasattr(orchestrator, "mermaid"):
+        console.print(orchestrator.mermaid())
+    else:
+        for name in orchestrator.nodes:
+            console.print(f"  {name}")
+
+
+@app.command()
+def permissions() -> None:
+    """Show the least-privilege matrix each agent runs under."""
+    from packages.agent_protocol import describe_permissions
+
+    table = Table("agent", "capabilities")
+    for row in describe_permissions():
+        table.add_row(str(row["agent"]), ", ".join(row["capabilities"]))
+    console.print(table)
 
 
 if __name__ == "__main__":
