@@ -17,10 +17,10 @@ from packages.agent_protocol.permissions import (
     AGENT_PERMISSIONS,
     TOOL_CAPABILITY,
     AgentPermissions,
+    permissions_for,
 )
 from packages.agent_protocol.permissions import Capability as AgentCapability
 from packages.agent_protocol.permissions import describe as describe_permissions
-from packages.agent_protocol.permissions import permissions_for
 
 
 class AgentSignal(Exception):

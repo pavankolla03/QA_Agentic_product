@@ -917,6 +917,90 @@ async def list_users(principal: Principal = requires("*")) -> dict[str, Any]:
         }
 
 
+@api.get("/metrics/cost", tags=["metrics"])
+async def cost_metrics(
+    principal: Principal = requires("report:read"),
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Cost dashboard: where the money went, per model / agent / tier / scenario."""
+    from services.observability.metrics import cost_dashboard
+
+    return cost_dashboard(org_id=principal.org_id, days=days)
+
+
+@api.get("/metrics/management", tags=["metrics"])
+async def management_metrics(
+    principal: Principal = requires("report:read"),
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Management dashboard: coverage, pass rate, healing accuracy, intervention."""
+    from services.observability.metrics import management_dashboard
+
+    return management_dashboard(org_id=principal.org_id, days=days)
+
+
+@api.get("/metrics/savings", tags=["metrics"])
+async def savings_metrics(
+    principal: Principal = requires("report:read"),
+    days: int = Query(default=30, ge=1, le=365),
+) -> dict[str, Any]:
+    """What the knowledge layer actually avoided. Measured, not projected."""
+    from services.observability.metrics import savings_report
+
+    return savings_report(org_id=principal.org_id, days=days)
+
+
+@api.get("/permissions", tags=["system"])
+async def agent_permissions(_p: CurrentPrincipal) -> dict[str, Any]:
+    """The least-privilege matrix each agent runs under."""
+    from packages.agent_protocol import describe_permissions
+
+    return {"agents": describe_permissions()}
+
+
+@api.get("/graph", tags=["system"])
+async def orchestrator_graph(_p: CurrentPrincipal) -> dict[str, Any]:
+    """The agent pipeline, rendered from the compiled graph itself."""
+    from agents.orchestrator.langgraph_graph import LANGGRAPH_AVAILABLE, build_orchestrator
+
+    orchestrator = build_orchestrator()
+    mermaid = orchestrator.mermaid() if hasattr(orchestrator, "mermaid") else ""
+    return {
+        "backend": type(orchestrator).__name__,
+        "langgraph_available": LANGGRAPH_AVAILABLE,
+        "mermaid": mermaid,
+        "nodes": list(orchestrator.nodes),
+    }
+
+
+@api.get("/projects/{project_id}/knowledge", tags=["projects"])
+async def project_knowledge(project_id: str, principal: Principal = requires("project:read")) -> dict[str, Any]:
+    """What the platform knows about this project - the thing that makes it cheap."""
+    from services.knowledge_service.application_map import ApplicationMap
+    from services.knowledge_service.repository_map import RepositoryMap
+    from services.knowledge_service.test_knowledge import QAKnowledgeGraph, TestKnowledgeStore
+
+    with session_scope() as session:
+        row = _owned_project(session, project_id, principal)
+        repo_path = row.repository_path
+        name = row.name
+
+    repo_map = RepositoryMap.load(repo_path)
+    app_map = ApplicationMap.load(repo_path)
+    store = TestKnowledgeStore(project_id)
+    graph = QAKnowledgeGraph(project_id)
+
+    return {
+        "project": name,
+        "repository_map": repo_map.stats() if repo_map else None,
+        "application_map": app_map.stats() if app_map else None,
+        "test_knowledge": store.stats(),
+        "knowledge_graph": graph.coverage(),
+        "components": list((app_map.components or {}).keys()) if app_map else [],
+        "known_routes": app_map.known_routes() if app_map else [],
+    }
+
+
 app.include_router(api)
 
 
