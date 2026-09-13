@@ -125,6 +125,40 @@ class TestDesignAgent(BaseAgent):
             f"designed {plan.scenario_count} scenario(s) across {len(plan.features)} feature file(s); "
             f"reusing {len(plan.page_objects_reused)} page object(s), {len(plan.fixtures_reused)} fixture(s)"
         )
+
+        # Publish the plan itself, so a client can show *what was decided*
+        # rather than only that a decision happened. Without this the chat can
+        # say "test_design finished" and nothing about the suite it designed.
+        if ctx.tracker is not None:
+            ctx.tracker.emit(
+                "plan_ready",
+                f"{plan.scenario_count} scenario(s) planned",
+                agent=self.name,
+                data={
+                    "title": plan.title,
+                    "strategy": plan.strategy[:600],
+                    "reused_pages": list(plan.page_objects_reused)[:10],
+                    "new_pages": list(plan.page_objects_needed)[:10],
+                    "features": [
+                        {
+                            "name": feature.name,
+                            "file": feature.file_name,
+                            "scenarios": [
+                                {
+                                    "id": s.test_id,
+                                    "name": s.name,
+                                    "tags": list(s.tags),
+                                    "priority": s.priority.value,
+                                    "negative": s.negative,
+                                    "steps": [step.render() for step in s.steps],
+                                }
+                                for s in feature.scenarios
+                            ],
+                        }
+                        for feature in plan.features
+                    ],
+                },
+            )
         if ctx.tracker:
             for trace in getattr(ctx.tracker, "agent_traces", []):
                 if trace.agent == self.name and not trace.output_summary:

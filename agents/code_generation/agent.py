@@ -62,6 +62,11 @@ from packages.aiqa_types.enums import AgentName, ArtifactKind, Capability, Chang
 from packages.aiqa_types.models import CodeBundle, FileChange, TestPlan
 from tools.filesystem.fs_tools import make_diff
 
+#: A diff larger than this is summarised in the event and read in full from the
+#: editor instead. Event rows are replayed to every client that attaches, so a
+#: 200 KB diff there would be paid for repeatedly.
+_MAX_EVENT_DIFF_CHARS = 6000
+
 PLAN_SYSTEM = """You plan QA automation. You do NOT write files - a renderer emits the code from your plan.
 
 Given the scenarios, the verified locator catalogue and the repository's existing assets, decide:
@@ -148,6 +153,33 @@ class CodeGenerationAgent(BaseAgent):
             ),
         )
         ctx.code_bundle = bundle
+
+        # Publish the code itself. A client that only sees "code_generation
+        # finished" cannot show the engineer what was written, which is the one
+        # thing they most need to review. Diffs are capped: the full file is a
+        # click away in the editor, and an event row is not the place for it.
+        if ctx.tracker is not None:
+            ctx.tracker.emit(
+                "files_generated",
+                f"{len(changes)} file(s) written",
+                agent=self.name,
+                data={
+                    "files": [
+                        {
+                            "path": change.path,
+                            "kind": str(getattr(change.kind, "value", change.kind)),
+                            "language": change.language,
+                            "change_type": str(getattr(change.change_type, "value", change.change_type)),
+                            "rationale": change.rationale[:200],
+                            "lines": change.content.count("\n") + 1,
+                            "diff": change.diff[:_MAX_EVENT_DIFF_CHARS],
+                            "diff_truncated": len(change.diff) > _MAX_EVENT_DIFF_CHARS,
+                            "todos": change.content.count("TODO(aiqa)") + change.content.count("test.fixme"),
+                        }
+                        for change in changes
+                    ]
+                },
+            )
         ctx.note(
             f"generated {len(changes)} file(s), {bundle.total_bytes} bytes "
             f"({len(generation.pages)} page object(s), {len(generation.steps)} step(s) planned)"

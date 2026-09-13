@@ -126,6 +126,145 @@
     container.appendChild(pre);
   }
 
+  /**
+   * The suite the design agent decided on.
+   *
+   * "test_design finished" tells the engineer nothing they can act on. What
+   * they need is the scenarios: which risks were covered, which were skipped,
+   * and whether the priorities match their own judgement — before any code is
+   * written against them.
+   */
+  function renderPlan(data) {
+    clearWelcome();
+    const card = el('div', 'card plan');
+    card.appendChild(el('div', 'card-title', data.title || 'Test plan'));
+    if (data.strategy) {
+      card.appendChild(el('div', 'muted strategy', data.strategy));
+    }
+
+    (data.features || []).forEach(function (feature) {
+      const group = el('div', 'feature');
+      const head = el('div', 'feature-head');
+      head.appendChild(el('span', 'feature-name', feature.name || 'Feature'));
+      if (feature.file) {
+        head.appendChild(el('span', 'muted', feature.file));
+      }
+      group.appendChild(head);
+
+      (feature.scenarios || []).forEach(function (scenario) {
+        const row = el('div', 'scenario');
+        const title = el('div', 'scenario-title');
+        title.appendChild(el('span', 'scenario-id', scenario.id || ''));
+        title.appendChild(el('span', null, scenario.name || ''));
+        if (scenario.negative) {
+          title.appendChild(el('span', 'tag negative', 'negative'));
+        }
+        (scenario.tags || []).slice(0, 3).forEach(function (tag) {
+          title.appendChild(el('span', 'tag', tag));
+        });
+        row.appendChild(title);
+
+        // The steps are collapsed: a dozen scenarios' worth of Gherkin at once
+        // buries the shape of the suite, which is what this view is for.
+        const steps = el('details', 'steps');
+        const summary = document.createElement('summary');
+        summary.textContent = (scenario.steps || []).length + ' steps';
+        steps.appendChild(summary);
+        (scenario.steps || []).forEach(function (step) {
+          steps.appendChild(el('div', 'step-line', step));
+        });
+        row.appendChild(steps);
+        group.appendChild(row);
+      });
+      card.appendChild(group);
+    });
+
+    const reuse = [];
+    if ((data.reused_pages || []).length) {
+      reuse.push('reusing ' + data.reused_pages.join(', '));
+    }
+    if ((data.new_pages || []).length) {
+      reuse.push('new: ' + data.new_pages.join(', '));
+    }
+    if (reuse.length) {
+      card.appendChild(el('div', 'muted', reuse.join('  ·  ')));
+    }
+
+    els.timeline.appendChild(card);
+    scroll();
+  }
+
+  /**
+   * Every file the agents wrote, with its diff and a way into the editor.
+   *
+   * This is the review surface. A webview is a fine place to *notice* what
+   * changed and a poor place to edit it, so each card opens the real file.
+   */
+  function renderFiles(data, applied) {
+    clearWelcome();
+    const files = data.files || [];
+    if (!files.length) {
+      return;
+    }
+    const card = el('div', 'card files');
+    const todos = files.reduce(function (sum, f) { return sum + (f.todos || 0); }, 0);
+    card.appendChild(
+      el(
+        'div',
+        'card-title',
+        files.length + (applied ? ' file(s) written to disk' : ' file(s) generated'),
+      ),
+    );
+    if (todos) {
+      card.appendChild(
+        el(
+          'div',
+          'muted',
+          todos + ' TODO(aiqa)/fixme marker(s) — places the agents refused to guess',
+        ),
+      );
+    }
+
+    files.forEach(function (file) {
+      const row = el('div', 'file');
+      const head = el('div', 'file-head');
+
+      const open = el('button', 'linkish', file.path);
+      open.title = 'Open in the editor';
+      open.addEventListener('click', function () {
+        vscode.postMessage({ type: 'openFile', path: file.path });
+      });
+      head.appendChild(open);
+
+      const meta = [];
+      if (file.change_type) meta.push(file.change_type);
+      if (file.lines) meta.push(file.lines + ' lines');
+      if (file.todos) meta.push(file.todos + ' todo');
+      head.appendChild(el('span', 'muted', meta.join(' · ')));
+      row.appendChild(head);
+
+      if (file.rationale) {
+        row.appendChild(el('div', 'muted rationale', file.rationale));
+      }
+
+      if (file.diff) {
+        const details = el('details', 'file-diff');
+        const summary = document.createElement('summary');
+        summary.textContent = 'diff';
+        details.appendChild(summary);
+        renderDiff(details, file.diff);
+        if (file.diff_truncated) {
+          details.appendChild(el('div', 'muted', '… open the file for the rest'));
+        }
+        row.appendChild(details);
+      }
+      card.appendChild(row);
+    });
+
+    els.timeline.appendChild(card);
+    scroll();
+  }
+
   function renderApproval(approval) {
     clearWelcome();
     const card = el('div', 'approval');
@@ -255,6 +394,18 @@
       case 'run_started':
         setStatus('connected', 'running');
         banner('');
+        break;
+
+      case 'plan_ready':
+        renderPlan(event.data || {});
+        break;
+
+      case 'files_generated':
+        renderFiles(event.data || {}, false);
+        break;
+
+      case 'files_applied':
+        addLine(agent, event.message || 'files applied', 'info');
         break;
 
       case 'agent_started':

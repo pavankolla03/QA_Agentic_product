@@ -169,6 +169,16 @@ class ExecutionAgent(BaseAgent):
         if not result.ok:
             raise RuntimeError(f"could not apply generated files: {result.error}")
         ctx.metadata["changes_applied"] = True
+
+        # "Proposed" and "on disk" are different states, and the engineer needs
+        # to know which one they are looking at before they start editing.
+        if ctx.tracker is not None and ctx.code_bundle is not None:
+            ctx.tracker.emit(
+                "files_applied",
+                f"{len(ctx.code_bundle.changes)} file(s) applied to the working tree",
+                agent=self.name,
+                data={"paths": [c.path for c in ctx.code_bundle.changes]},
+            )
         ctx.metadata["applied_files"] = result.data
         ctx.note(f"applied {len(result.data or [])} file(s) to {ctx.project_root}")
 

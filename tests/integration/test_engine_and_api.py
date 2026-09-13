@@ -598,3 +598,55 @@ async def test_the_active_agent_is_visible_while_the_run_is_still_going(
             row = session.get(RunRow, run_id)
             assert row.current_agent == AgentName.TEST_DESIGN.value
             assert row.progress == pytest.approx(0.42)
+
+
+async def test_the_plan_and_the_generated_code_reach_the_event_stream(
+    engine, project, org_user
+) -> None:
+    """A client cannot show what it is never told.
+
+    "test_design finished" and "code_generation finished" are useless for
+    review: the engineer needs the scenarios that were decided on and the files
+    that were written. Both now travel as structured events.
+    """
+    from sqlalchemy import select
+
+    from services.observability.db import session_scope
+    from services.observability.models import RunEventRow
+
+    org_id, user_id = org_user
+    run_id = engine.create_run(
+        RunRequest(
+            project_id=project.id,
+            instruction="Automate the Resident Registration functionality",
+            mode=RunMode.GENERATE,
+            auto_approve=True,
+        ),
+        user_id=user_id,
+        org_id=org_id,
+    )
+    await engine.run_to_completion(run_id, auto_approve=True)
+
+    with session_scope() as session:
+        rows = list(
+            session.execute(
+                select(RunEventRow).where(RunEventRow.run_id == run_id)
+            ).scalars()
+        )
+    by_type = {row.type: row for row in rows}
+
+    plan = by_type.get("plan_ready")
+    assert plan is not None, f"no plan_ready event; saw {sorted(by_type)}"
+    features = (plan.data or {}).get("features") or []
+    assert features and features[0].get("scenarios"), "the plan carried no scenarios"
+    first = features[0]["scenarios"][0]
+    assert first.get("name") and first.get("steps"), "a scenario must arrive reviewable"
+
+    generated = by_type.get("files_generated")
+    assert generated is not None, f"no files_generated event; saw {sorted(by_type)}"
+    files = (generated.data or {}).get("files") or []
+    assert files, "the event carried no files"
+    assert all(f.get("path") for f in files), "every file needs a path to open"
+    assert any(f.get("diff") for f in files), "at least one file should carry a diff"
+
+    assert "files_applied" in by_type, "the engineer must be told when files reach disk"

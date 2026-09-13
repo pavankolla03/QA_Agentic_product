@@ -267,3 +267,127 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: var(--vscode-charts-blue);
   transition: width 0.3s ease;
 }
+
+/* ---------------------------------------------------------------------- */
+/* The plan, and the files written from it. Both are review surfaces: dense
+   enough to take in at a glance, with detail behind a disclosure. */
+.card.plan,
+.card.files {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: var(--vscode-editorWidget-background);
+}
+
+.card-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.card .strategy {
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.feature {
+  margin: 8px 0 4px;
+}
+
+.feature-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  padding-bottom: 3px;
+  margin-bottom: 4px;
+}
+
+.feature-name {
+  font-weight: 600;
+}
+
+.scenario {
+  padding: 3px 0 3px 8px;
+  border-left: 2px solid var(--vscode-panel-border);
+  margin: 3px 0;
+}
+
+.scenario-title {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.scenario-id {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+.tag {
+  font-size: 0.75em;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+
+.tag.negative {
+  background: var(--vscode-inputValidation-warningBackground);
+  color: var(--vscode-editor-foreground);
+}
+
+.steps summary,
+.file-diff summary {
+  cursor: pointer;
+  font-size: 0.85em;
+  opacity: 0.75;
+  margin: 2px 0;
+}
+
+.step-line {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  padding-left: 10px;
+  opacity: 0.9;
+}
+
+.file {
+  padding: 5px 0;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.file:first-of-type {
+  border-top: none;
+}
+
+.file-head {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+/* A path that opens the real file. Deliberately a button, not a link: it runs
+   a command rather than navigating. */
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.linkish:hover {
+  text-decoration: underline;
+}
+
+.file .rationale {
+  font-size: 0.85em;
+  padding: 1px 0 2px;
+}
