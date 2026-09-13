@@ -165,6 +165,24 @@ def detect_layout(root: Path, parsed: list[ParsedFile]) -> dict[str, str]:
     return layout
 
 
+#: Words common enough in feature filenames that seeing one glued to another is
+#: good evidence the team writes them run-together.
+_FILENAME_WORDS = (
+    "page", "form", "list", "view", "edit", "create", "delete", "search",
+    "login", "logout", "user", "admin", "report", "detail", "registration",
+    "management", "profile", "settings", "checkout", "order", "invoice",
+)
+
+
+def _looks_multiword(stem: str) -> bool:
+    """Is this stem two words run together, rather than a single word?"""
+    lowered = stem.lower()
+    if len(lowered) < 9:
+        return False
+    hits = sum(1 for word in _FILENAME_WORDS if word in lowered)
+    return hits >= 2
+
+
 def detect_naming(parsed: list[ParsedFile]) -> dict[str, str]:
     """Learn the team's naming habits so generated files blend in."""
     conventions: dict[str, str] = {}
@@ -190,10 +208,19 @@ def detect_naming(parsed: list[ParsedFile]) -> dict[str, str]:
 
     feature_files = [Path(p.path).name for p in parsed if p.path.endswith(".feature")]
     if feature_files:
-        stem = Path(feature_files[0]).stem
-        conventions["feature_file"] = (
-            "kebab-case.feature" if "-" in stem else "snake_case.feature" if "_" in stem else "lowercase.feature"
-        )
+        stems = [Path(name).stem for name in feature_files]
+        if any("-" in stem for stem in stems):
+            conventions["feature_file"] = "kebab-case.feature"
+        elif any("_" in stem for stem in stems):
+            conventions["feature_file"] = "snake_case.feature"
+        elif any(_looks_multiword(stem) for stem in stems):
+            # Only a run-together multi-word name is evidence *for* lowercase.
+            # `login.feature` is one word and is equally consistent with every
+            # convention, so concluding "lowercase" from it would silently
+            # strip the separators out of every generated filename.
+            conventions["feature_file"] = "lowercase.feature"
+        else:
+            conventions["feature_file"] = "kebab-case.feature"
 
     # Test-id prefix, e.g. TC-AUTH-001
     ids = [

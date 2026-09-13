@@ -103,6 +103,111 @@ class JiraFetchIssueTool(Tool):
         )
 
 
+class JiraFetchEpicTool(Tool):
+    """Every issue under an epic, as requirement text.
+
+    Automating a feature one ticket at a time is how a backlog stays ahead of
+    the QA team forever. This is the input to a batch run: one epic in, a
+    prioritised list of requirements out.
+
+    It deliberately does NOT start anything. A 30-issue epic is 30 runs, and
+    that decision — with its cost — belongs to a human looking at the list.
+    """
+
+    name = "jira.fetch_epic"
+    category = ToolCategory.JIRA
+    description = "Fetch every child issue of a Jira epic as requirement text."
+    schema = {
+        "type": "object",
+        "properties": {
+            "epic_key": {"type": "string"},
+            "max_issues": {"type": "integer", "minimum": 1, "maximum": 100},
+            "statuses": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["epic_key"],
+    }
+
+    def _run(
+        self,
+        epic_key: str,
+        max_issues: int = 50,
+        statuses: list[str] | None = None,
+        **_: Any,
+    ) -> ToolResult:
+        s = get_settings()
+        if not s.jira_base_url:
+            return ToolResult.failure("Jira is not configured (set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN)")
+        headers = _auth_header()
+        if not headers:
+            return ToolResult.failure("Jira credentials are missing (JIRA_EMAIL / JIRA_API_TOKEN)")
+
+        key = epic_key.strip().upper()
+        if not ISSUE_KEY_RE.fullmatch(key):
+            return ToolResult.failure(f"'{epic_key}' is not a valid Jira issue key")
+
+        # `parent` covers team-managed projects; `"Epic Link"` company-managed.
+        # Asking for both in one query avoids caring which this project is.
+        jql = f'(parent = {key} OR "Epic Link" = {key})'
+        if statuses:
+            quoted = ", ".join(f'"{status}"' for status in statuses if status)
+            if quoted:
+                jql += f" AND status IN ({quoted})"
+        jql += " ORDER BY priority DESC, created ASC"
+
+        url = f"{s.jira_base_url.rstrip('/')}/rest/api/3/search"
+        try:
+            with httpx.Client(timeout=45, follow_redirects=True) as client:
+                response = client.get(
+                    url,
+                    headers={**headers, "Accept": "application/json"},
+                    params={
+                        "jql": jql,
+                        "maxResults": max(1, min(int(max_issues), 100)),
+                        "fields": "summary,description,issuetype,status,priority,labels,components",
+                    },
+                )
+        except httpx.HTTPError as exc:
+            return ToolResult.failure(f"Jira request failed: {exc}")
+        if response.status_code >= 400:
+            return ToolResult.failure(
+                f"Jira returned HTTP {response.status_code} for the epic query. "
+                "Check that the epic key exists and the account can see it."
+            )
+
+        payload = response.json() or {}
+        issues: list[dict[str, Any]] = []
+        for raw in payload.get("issues", []) or []:
+            fields = raw.get("fields", {}) or {}
+            summary = fields.get("summary", "")
+            description = _adf_to_text(fields.get("description"))
+            issues.append(
+                {
+                    "key": raw.get("key", ""),
+                    "summary": summary,
+                    "issue_type": ((fields.get("issuetype") or {}).get("name", "")),
+                    "status": ((fields.get("status") or {}).get("name", "")),
+                    "priority": ((fields.get("priority") or {}).get("name", "")),
+                    "labels": fields.get("labels", []),
+                    "components": [c.get("name") for c in (fields.get("components") or [])],
+                    "requirement_text": "\n\n".join(p for p in [summary, description] if p)[:16000],
+                    "url": f"{s.jira_base_url.rstrip('/')}/browse/{raw.get('key', '')}",
+                }
+            )
+
+        return ToolResult.success(
+            {
+                "epic": key,
+                "issue_count": len(issues),
+                "total_available": int(payload.get("total", len(issues))),
+                "issues": issues,
+                "note": (
+                    "Nothing has been started. Feed these into a batch plan to see the "
+                    "cost before committing to it."
+                ),
+            }
+        )
+
+
 class JiraCreateDefectTool(Tool):
     """Raise a defect when the Failure Analysis Agent concludes the *product* is broken."""
 
@@ -171,4 +276,4 @@ class JiraCreateDefectTool(Tool):
         return ToolResult.success({"key": key, "url": f"{s.jira_base_url.rstrip('/')}/browse/{key}"})
 
 
-JIRA_TOOLS = [JiraFetchIssueTool, JiraCreateDefectTool]
+JIRA_TOOLS = [JiraFetchIssueTool, JiraFetchEpicTool, JiraCreateDefectTool]

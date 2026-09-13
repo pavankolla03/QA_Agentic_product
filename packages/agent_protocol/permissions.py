@@ -71,6 +71,7 @@ TOOL_CAPABILITY: dict[str, Capability] = {
     "mobile.probe": Capability.MOBILE,
     "mobile.scaffold": Capability.MOBILE,
     "jira.fetch_issue": Capability.READ_ISSUES,
+    "jira.fetch_epic": Capability.READ_ISSUES,
     "jira.create_defect": Capability.WRITE_ISSUES,
     "slack.notify": Capability.NOTIFY,
     "teams.notify": Capability.NOTIFY,

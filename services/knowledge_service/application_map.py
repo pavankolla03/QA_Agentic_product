@@ -102,6 +102,11 @@ class LocatorKnowledge:
         return max(0.0, _now() - self.last_verified)
 
 
+#: Methods a form element can legitimately declare. Anything else is markup we
+#: do not understand, and is normalised rather than trusted.
+_HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+
+
 @dataclass
 class PageKnowledge:
     """Everything known about one route of the application."""
@@ -120,6 +125,18 @@ class PageKnowledge:
     visit_count: int = 1
     confidence: float = 0.7
     simulated: bool = False            # captured via the HTTP fallback, not a browser
+    #: Consecutive explorations that produced the same `dom_hash`.
+    #:
+    #: A visual regression test on a page whose markup changes every visit is a
+    #: guaranteed false positive, and a suite that cries wolf gets ignored. This
+    #: counter is how the platform tells a settled page from a churning one.
+    stable_visits: int = 0
+
+    def visually_stable(self, required: int = 2) -> bool:
+        """Has this page looked the same often enough to be worth baselining?"""
+        # A page captured over plain HTTP was never rendered, so its screenshot
+        # would not reflect what a user sees.
+        return not self.simulated and bool(self.dom_hash) and self.stable_visits >= required
 
     def locators(self) -> list[LocatorKnowledge]:
         out: list[LocatorKnowledge] = []
@@ -132,6 +149,44 @@ class PageKnowledge:
 
     def trustworthy_locators(self) -> list[LocatorKnowledge]:
         return [locator for locator in self.locators() if locator.trustworthy]
+
+    def endpoints(self) -> list[dict[str, Any]]:
+        """The API surface this page exposes, taken from its forms.
+
+        A form's `action` and `method` are the application telling us, in its
+        own markup, which endpoint it posts to and with which fields. That is
+        evidence, not inference, which is the only basis on which an API test
+        should be generated at all — the same rule that governs locators.
+
+        Endpoints reached only by client-side fetch/XHR are not visible here.
+        They are simply absent rather than guessed at.
+        """
+        out: list[dict[str, Any]] = []
+        for form in self.forms:
+            action = str(form.get("action") or "").strip()
+            if not action or action.startswith(("javascript:", "#")):
+                continue
+            method = str(form.get("method") or "get").upper()
+            fields = [
+                locator.name
+                for locator in self.locators()
+                if locator.role in ("textbox", "combobox", "checkbox", "radio")
+            ]
+            out.append(
+                {
+                    "path": action if action.startswith("/") else f"/{action.lstrip('./')}",
+                    "method": method if method in _HTTP_METHODS else "GET",
+                    "page": self.route,
+                    "fields": fields,
+                    "required_fields": [
+                        locator.name
+                        for locator in self.locators()
+                        if locator.required and locator.role in ("textbox", "combobox")
+                    ],
+                    "source": "form_action",
+                }
+            )
+        return out
 
     def age_seconds(self) -> float:
         return max(0.0, _now() - self.explored_at)
@@ -203,6 +258,13 @@ class ApplicationMap:
         existing = self.page(page.route)
         if existing is not None:
             page.visit_count = existing.visit_count + 1
+            page.stable_visits = (
+                existing.stable_visits + 1
+                if page.dom_hash and page.dom_hash == existing.dom_hash
+                else 0
+            )
+            # Keep a screenshot we already had if this capture produced none.
+            page.screenshot_path = page.screenshot_path or existing.screenshot_path
             # Carry forward the outcome history of locators we have seen before.
             previous = {locator.locator: locator for locator in existing.locators()}
             merged: list[dict[str, Any]] = []
@@ -327,6 +389,51 @@ class ApplicationMap:
         out.sort(key=lambda item: item["confidence"], reverse=True)
         return out[:limit]
 
+    def api_catalog(self, limit: int = 40) -> list[dict[str, Any]]:
+        """Every endpoint the application revealed, de-duplicated.
+
+        This is to API tests what `catalog()` is to page objects: the closed set
+        of things a generated test is allowed to call. A path that is not in
+        here was never observed, so a test against it would be a guess.
+        """
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for raw in self.pages.values():
+            page = PageKnowledge(**raw)
+            for endpoint in page.endpoints():
+                key = (endpoint["method"], endpoint["path"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(endpoint)
+                if len(out) >= limit:
+                    return out
+        return out
+
+    def visual_candidates(self, required_stable_visits: int = 2) -> list[dict[str, Any]]:
+        """Routes settled enough that a screenshot assertion would be meaningful.
+
+        Visual regression is the easiest kind of test to make worthless: point it
+        at a dashboard with a live clock and it fails every run until somebody
+        deletes it. So a route qualifies only after its markup has come back
+        identical on consecutive visits.
+        """
+        out: list[dict[str, Any]] = []
+        for route, raw in sorted(self.pages.items()):
+            page = PageKnowledge(**raw)
+            if not page.visually_stable(required_stable_visits):
+                continue
+            out.append(
+                {
+                    "route": route,
+                    "title": page.title,
+                    "dom_hash": page.dom_hash,
+                    "screenshot_path": page.screenshot_path,
+                    "stable_visits": page.stable_visits,
+                }
+            )
+        return out
+
     def stats(self) -> dict[str, Any]:
         pages = [PageKnowledge(**raw) for raw in self.pages.values()]
         all_locators = [locator for page in pages for locator in page.locators()]
@@ -341,6 +448,8 @@ class ApplicationMap:
             )
             if all_locators
             else 0.0,
+            "endpoints": len(self.api_catalog()),
+            "visually_stable_routes": len(self.visual_candidates()),
             "navigation_edges": len(self.navigation),
             "explored_at": self.explored_at,
             "app_version": self.app_version,

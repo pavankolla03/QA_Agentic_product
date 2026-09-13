@@ -5,6 +5,10 @@ venv/
 .env
 .env.local
 *.db
+# SQLite write-ahead sidecars. `*.db` does not match these, and they hold
+# real run data — prompts, traces — so they must not be published either.
+*.db-shm
+*.db-wal
 *.sqlite3
 .aiqa/
 node_modules/

@@ -204,6 +204,52 @@ and tokens per scenario** and run `--live` for money.
 
 ---
 
+## 7a. Measured effect of the v3 round
+
+Every number here is from `python -m scripts.profile_run` against the bundled
+demo application, using the offline deterministic provider. That proves request
+counts, token volume and reuse behaviour. It does **not** prove dollars —
+`--live` with real providers does.
+
+| | Before | After |
+|---|---|---|
+| total tokens per run | 14,415 | **10,056** |
+| scenarios produced | 5 | **6** |
+| tokens per scenario | 2,883 | **1,676** (−42%) |
+| code generation input | 6,797 over 2 calls | **2,323 over 1** |
+| test design output | 1,333 | **1,025** |
+
+A second run of the same request:
+
+| | run 1 | run 2 |
+|---|---|---|
+| LLM calls | 8 | **7** |
+| output tokens | 2,012 | **981** |
+| design calls | 1 | **0** |
+
+What produced it:
+
+1. **Inverted code generation.** The model returns a compact JSON plan — which
+   Page Objects, which methods, which catalogue locator each uses — and
+   `renderer.py` emits the TypeScript. The prompt carries no boilerplate, the
+   completion carries no file, and page objects and steps share one call
+   instead of two. A hallucinated selector also became impossible rather than
+   merely detectable: the renderer can only emit locators it was handed.
+2. **A compact design schema.** Steps are strings (`"Given I am signed in"`)
+   rather than `{"keyword": ..., "text": ...}` objects, and test ids, tags,
+   file names and the data-driven flag are derived rather than requested. Asking
+   a model to retype what the platform already computes is pure cost.
+3. **Skipping design entirely.** When every testable acceptance criterion is
+   already traced to a remembered scenario, the design call does not happen.
+   Traceability is exact — each stored test records the criteria it verifies —
+   rather than a similarity guess, because a false skip silently under-tests.
+4. **Prompt caching that reaches the wire.** The `cache_control` marker is now
+   emitted for Anthropic models, natively and through OpenRouter, and the house
+   standards moved into the system prompt so there is a stable prefix worth
+   caching. Providers that cache automatically are not sent a marker.
+
+---
+
 ## 8. Where the savings actually come from
 
 Ranked by impact, from measurement rather than intuition:
@@ -233,3 +279,14 @@ Ranked by impact, from measurement rather than intuition:
 | Stricter spend control | Lower `run_budget.max_cost_usd` and `max_requests` |
 | More re-exploration | Lower `DEFAULT_TTL_SECONDS` in `application_map.py` |
 | Less re-exploration | Raise the TTL, or raise `CONFIDENCE_FLOOR` |
+| Never skip test design | Set `reuse.skip_design: false` in `models.yaml` |
+| Skip design more readily | Lower `reuse.skip_design_similarity` (default 0.80) — but read the warning below |
+| Visual regression | Set `visual.enabled: true` in `standards.yaml` |
+
+### One knob to be careful with
+
+`reuse.skip_design_coverage` defaults to `1.0`: **every** testable criterion must
+already be covered before the design call is skipped. Lowering it means a run can
+skip design while some criteria have no test, and produce a plan that looks
+complete and is not. The saving is one call; the cost is untested behaviour
+nobody knows is untested. The default errs towards paying.

@@ -195,6 +195,16 @@ class BaseProvider(abc.ABC):
     async def _chat(self, req: LLMRequest) -> LLMResponse:
         """Provider-specific implementation. Receives an already-redacted request."""
 
+    def model_available(self, model: str) -> bool:
+        """Is this specific model usable right now?
+
+        Distinct from `configured`, which is about the provider as a whole. A
+        provider that rate-limits individual models overrides this so the router
+        can fall through to the next entry in the tier instead of abandoning the
+        provider entirely.
+        """
+        return True
+
     async def chat(self, req: LLMRequest) -> LLMResponse:
         """Public entry point: redact → call → time → normalise usage."""
         safe, hits = req.redacted()

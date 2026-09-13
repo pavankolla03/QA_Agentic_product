@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+
+import pytest
+
 from packages.aiqa_types.enums import RunMode, RunStatus
 from packages.aiqa_types.models import RunRequest
 
@@ -531,3 +535,66 @@ def test_timestamps_carry_an_explicit_utc_offset(api_client, repo_copy) -> None:
     assert parsed.tzinfo is not None
     age = abs((datetime.now(timezone.utc) - parsed).total_seconds())
     assert age < 120, f"a run created just now reported an age of {age:.0f}s"
+
+
+async def test_a_background_run_that_dies_is_marked_failed(engine, project, org_user, monkeypatch) -> None:
+    """A fire-and-forget task swallows its own exception.
+
+    `execute` guards the orchestrator, but context setup happens before that
+    guard. When something there threw, the task died silently, the row stayed
+    `running`, and every client polled it forever.
+    """
+    from packages.aiqa_types.enums import RunMode, RunStatus
+    from packages.aiqa_types.models import RunRequest
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+
+    org_id, user_id = org_user
+    run_id = engine.create_run(
+        RunRequest(project_id=project.id, instruction="Automate something", mode=RunMode.GENERATE),
+        user_id=user_id,
+        org_id=org_id,
+    )
+
+    async def boom(_run_id: str):
+        raise RuntimeError("context could not be built")
+
+    monkeypatch.setattr(engine, "execute", boom)
+
+    task = await engine.start(run_id)
+    with contextlib.suppress(RuntimeError):
+        await task
+
+    with session_scope() as session:
+        row = session.get(RunRow, run_id)
+        assert row.status == RunStatus.FAILED.value, "a dead run must not look alive"
+        assert "context could not be built" in row.error
+
+
+async def test_the_active_agent_is_visible_while_the_run_is_still_going(
+    engine, project, org_user
+) -> None:
+    """Polling clients read the row, not the event stream.
+
+    `current_agent` used to be written only when a run finished, so the status
+    bar showed a nameless spinner for the whole run — minutes of it on free
+    models.
+    """
+    from packages.aiqa_types.enums import AgentName
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+    from services.observability.tracker import RunTracker
+
+    org_id, user_id = org_user
+    run_id = engine.create_run(
+        RunRequest(project_id=project.id, instruction="Automate something", mode=RunMode.GENERATE),
+        user_id=user_id,
+        org_id=org_id,
+    )
+
+    tracker = RunTracker(run_id=run_id, project_id=project.id, user_id=user_id)
+    with tracker.agent_span(AgentName.TEST_DESIGN, "designing", progress=0.42):
+        with session_scope() as session:
+            row = session.get(RunRow, run_id)
+            assert row.current_agent == AgentName.TEST_DESIGN.value
+            assert row.progress == pytest.approx(0.42)

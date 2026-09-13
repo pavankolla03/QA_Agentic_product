@@ -1011,6 +1011,137 @@ async def project_knowledge(project_id: str, principal: Principal = requires("pr
     }
 
 
+@api.get("/projects/{project_id}/coverage", tags=["projects"])
+async def project_coverage(
+    project_id: str,
+    severity: str = Query(default="", description="Filter: high | medium | low"),
+    principal: Principal = requires("project:read"),
+) -> dict[str, Any]:
+    """What the suite does NOT cover, and what to run to close each gap.
+
+    A pure join over the application map, the test knowledge store and the QA
+    graph, so it costs nothing to call and can run on every commit.
+    """
+    from services.knowledge_service.application_map import ApplicationMap
+    from services.knowledge_service.coverage import analyse_coverage
+    from services.knowledge_service.test_knowledge import QAKnowledgeGraph, TestKnowledgeStore
+
+    with session_scope() as session:
+        row = _owned_project(session, project_id, principal)
+        repo_path = row.repository_path
+
+    report = analyse_coverage(
+        ApplicationMap.load(repo_path),
+        TestKnowledgeStore(project_id),
+        QAKnowledgeGraph(project_id),
+    )
+    payload = report.to_dict()
+    if severity:
+        payload["gaps"] = [g for g in payload["gaps"] if g["severity"] == severity]
+        payload["gap_count"] = len(payload["gaps"])
+    payload["summary"] = report.summary()
+    return payload
+
+
+@api.get("/projects/{project_id}/health", tags=["projects"])
+async def project_suite_health(
+    project_id: str, principal: Principal = requires("project:read")
+) -> dict[str, Any]:
+    """Per-test health, and which tests are costing more than they prove."""
+    from services.execution_service.suite_health import suite_health
+
+    with session_scope() as session:
+        _owned_project(session, project_id, principal)
+    return suite_health(project_id).to_dict()
+
+
+@api.post("/projects/{project_id}/quarantine", tags=["projects"])
+async def project_quarantine(
+    project_id: str,
+    body: dict[str, Any],
+    principal: Principal = requires("project:write"),
+) -> dict[str, Any]:
+    """Quarantine or release a test, or apply the recommendations in bulk.
+
+    A consistently failing test is refused unless `force` is set: that test is
+    reporting something, and hiding it is how a defect ships green.
+    """
+    from services.execution_service.suite_health import auto_quarantine, set_quarantine
+
+    with session_scope() as session:
+        _owned_project(session, project_id, principal)
+
+    test_id = str(body.get("test_id") or "").strip()
+    if not test_id:
+        return auto_quarantine(project_id, apply=bool(body.get("apply", False)))
+    return set_quarantine(
+        project_id,
+        test_id,
+        quarantined=bool(body.get("quarantined", True)),
+        force=bool(body.get("force", False)),
+    )
+
+
+@api.post("/projects/{project_id}/batch/plan", tags=["projects"])
+async def project_batch_plan(
+    project_id: str,
+    body: dict[str, Any],
+    principal: Principal = requires("project:read"),
+) -> dict[str, Any]:
+    """Price a batch before anyone commits to it.
+
+    Planning is a read: it starts nothing. Execution is driven by the CLI or the
+    extension, which can stream progress — an HTTP request held open for the
+    length of thirty runs would time out long before it finished.
+    """
+    from services.agent_engine.batch import plan_batch
+
+    with session_scope() as session:
+        _owned_project(session, project_id, principal)
+
+    plan = plan_batch(
+        project_id,
+        list(body.get("requirements") or []),
+        mode=str(body.get("mode") or "full"),
+        max_cost_usd=float(body.get("max_cost_usd") or 0.0),
+        max_items=int(body.get("max_items") or 50),
+    )
+    return plan.to_dict()
+
+
+@api.post("/projects/{project_id}/explore", tags=["projects"])
+async def project_explore(
+    project_id: str,
+    body: dict[str, Any] | None = None,
+    principal: Principal = requires("project:write"),
+) -> dict[str, Any]:
+    """Probe the application for self-evident defects, with no requirement.
+
+    Needs `project:write` rather than read: it sends requests to the running
+    application, including empty form submissions.
+    """
+    from services.execution_service.exploratory import explore, regression_instruction
+    from services.knowledge_service.application_map import ApplicationMap
+
+    with session_scope() as session:
+        row = _owned_project(session, project_id, principal)
+        repo_path, base_url = row.repository_path, row.base_url
+
+    app_map = ApplicationMap.load(repo_path)
+    if app_map is None or not base_url:
+        return {
+            "findings": [],
+            "summary": "Nothing to probe: this project has not been explored, or has no base URL.",
+        }
+
+    report = explore(app_map, base_url, max_probes=int((body or {}).get("max_probes", 40)))
+    payload = report.to_dict()
+    payload["next_steps"] = [
+        {"finding": f.title, "instruction": regression_instruction(f)} for f in report.confirmed[:10]
+    ]
+    return payload
+
+
 app.include_router(api)
 
 

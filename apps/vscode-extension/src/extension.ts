@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ApiClient, ApiError, Approval, RunMode } from './client/apiClient';
 import { ChatPanel, showDiffDocument } from './panels/chatPanel';
+import { ServerManager } from './server/serverManager';
 import { AgentsProvider, ApprovalItem, ApprovalsProvider, RunsProvider } from './views/trees';
 import {
   ActivityProvider,
@@ -32,6 +33,7 @@ let agentsProvider: AgentsProvider;
 let panels: { refresh(): void }[] = [];
 let output: vscode.LogOutputChannel;
 let pollTimer: NodeJS.Timeout | undefined;
+let server: ServerManager;
 
 const config = () => vscode.workspace.getConfiguration('aiqa');
 const projectId = () => config().get<string>('projectId', '');
@@ -39,6 +41,11 @@ const projectId = () => config().get<string>('projectId', '');
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel('AI QA Engineer', { log: true });
   api = new ApiClient(context);
+
+  // The extension is useless without a control plane, so bring one up before
+  // anything else tries to call it. An already-running server is left alone.
+  server = new ServerManager(output, () => api.baseUrl);
+  context.subscriptions.push(server);
 
   // -- sidebar ------------------------------------------------------- //
   approvalsProvider = new ApprovalsProvider(api);
@@ -105,6 +112,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.refresh', () => refreshAll());
   register('aiqa.openDashboard', () => vscode.env.openExternal(vscode.Uri.parse(api.baseUrl)));
   register('aiqa.doctor', () => doctor());
+  register('aiqa.startServer', () => startServer());
+  register('aiqa.stopServer', () => stopServer());
+  register('aiqa.restartServer', () => restartServer());
+  register('aiqa.showServerLog', () => output.show(true));
 
   // ---- v2 commands ------------------------------------------------- //
   register('aiqa.generateAutomation', () => promptAndRun(context, config().get<RunMode>('defaultMode', 'full')));
@@ -120,6 +131,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.showKnowledge', () => showKnowledge());
   register('aiqa.initStandards', () => initStandards());
   register('aiqa.showPipeline', () => showPipeline());
+  register('aiqa.showCoverage', () => showCoverage());
+  register('aiqa.showSuiteHealth', () => showSuiteHealth());
+  register('aiqa.exploratoryTest', () => exploratoryTest(context));
+  register('aiqa.batchFromEpic', () => batchFromEpic());
+  register('aiqa.automateInstruction', (instruction?: string) =>
+    runInstruction(context, instruction),
+  );
 
   // Re-read trees when the binding changes.
   context.subscriptions.push(
@@ -137,6 +155,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }, 15000);
   context.subscriptions.push({ dispose: () => pollTimer && clearInterval(pollTimer) });
 
+  await ensureServer();
   await connectBanner();
   refreshAll();
   output.info(`AI QA Engineer activated against ${api.baseUrl}`);
@@ -146,6 +165,8 @@ export function deactivate(): void {
   if (pollTimer) {
     clearInterval(pollTimer);
   }
+  // Only ever stops a server this extension started.
+  server?.dispose();
 }
 
 // =========================================================================== //
@@ -158,12 +179,17 @@ function wrap(id: string, handler: (...args: any[]) => unknown) {
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String((err as Error)?.message ?? err);
       output.error(`${id}: ${message}`);
-      const action = err instanceof ApiError && err.status === 0 ? 'How do I start it?' : undefined;
-      const picked = await vscode.window.showErrorMessage(`AI QA: ${message}`, ...(action ? [action] : []));
-      if (picked) {
-        void vscode.window.showInformationMessage(
-          'Start the control plane from the repository root: `aiqa serve` (or `python -m services.api_gateway.cli serve`).',
-        );
+      // A status of 0 means the control plane is unreachable. That is fixable
+      // from here, so offer the fix rather than instructions for it.
+      const unreachable = err instanceof ApiError && err.status === 0;
+      const picked = await vscode.window.showErrorMessage(
+        `AI QA: ${message}`,
+        ...(unreachable ? ['Start the control plane', 'Show log'] : []),
+      );
+      if (picked === 'Start the control plane') {
+        await startServer();
+      } else if (picked === 'Show log') {
+        output.show(true);
       }
       return undefined;
     }
@@ -649,6 +675,218 @@ async function showCost(): Promise<void> {
   ]);
 }
 
+/** Start a run for an instruction the UI already knows (e.g. a coverage gap). */
+async function runInstruction(
+  context: vscode.ExtensionContext,
+  instruction?: string,
+): Promise<void> {
+  const mode = config().get<RunMode>('defaultMode', 'full');
+  if (!instruction || !instruction.trim()) {
+    return promptAndRun(context, mode);
+  }
+  // Confirm rather than launch silently: the click came from a tree row, and a
+  // run costs money.
+  const picked = await vscode.window.showInformationMessage(
+    `Start a run for: ${instruction}?`,
+    { modal: false },
+    'Run it',
+    'Edit first',
+  );
+  if (picked === 'Edit first') {
+    return promptAndRun(context, mode);
+  }
+  if (picked !== 'Run it') {
+    return;
+  }
+  const panel = await openChat(context);
+  await panel.startRun(instruction.trim(), mode);
+}
+
+async function showCoverage(): Promise<void> {
+  const id = projectId();
+  if (!id) {
+    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    return;
+  }
+  const report = await api.projectCoverage(id);
+  const routes = report.routes ?? {};
+  const endpoints = report.endpoints ?? {};
+  const requirements = report.requirements ?? {};
+  const gaps = (report.gaps ?? []) as Record<string, any>[];
+
+  const lines: string[] = [
+    '# AI QA - coverage gaps',
+    '',
+    String(report.summary ?? ''),
+    '',
+    '| what | covered | total | % |',
+    '| --- | ---: | ---: | ---: |',
+    `| routes | ${routes.covered ?? 0} | ${routes.total ?? 0} | ${routes.pct ?? 0}% |`,
+    `| endpoints | ${endpoints.covered ?? 0} | ${endpoints.total ?? 0} | ${endpoints.pct ?? 0}% |`,
+    `| requirements | ${requirements.covered ?? 0} | ${requirements.total ?? 0} | ${requirements.pct ?? 0}% |`,
+    '',
+  ];
+  if (gaps.length) {
+    lines.push('## Gaps, worst first', '', '| severity | kind | what | run this to close it |', '| --- | --- | --- | --- |');
+    for (const gap of gaps) {
+      lines.push(`| ${gap.severity} | ${gap.kind} | \`${gap.label}\` | ${gap.suggested_instruction} |`);
+    }
+  } else {
+    lines.push('No gaps found.');
+  }
+  lines.push(
+    '',
+    '> A route counted as covered has a test touching it. That is not the same as',
+    '> being well tested, and this report does not claim otherwise.',
+  );
+
+  const document = await vscode.workspace.openTextDocument({
+    content: lines.join('\n'),
+    language: 'markdown',
+  });
+  await vscode.window.showTextDocument(document, { preview: true });
+}
+
+async function showSuiteHealth(): Promise<void> {
+  const id = projectId();
+  if (!id) {
+    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    return;
+  }
+  const report = await api.suiteHealth(id);
+  const tests = (report.tests ?? []) as Record<string, any>[];
+  if (!tests.length) {
+    void vscode.window.showInformationMessage(
+      'AI QA: no test has been executed yet, so there is nothing to judge.',
+    );
+    return;
+  }
+
+  const lines: string[] = [
+    `# AI QA - suite health (${report.health_score}%)`,
+    '',
+    String(report.summary ?? ''),
+    '',
+    '| verdict | test | runs | fail | flake | what to do |',
+    '| --- | --- | ---: | ---: | ---: | --- |',
+    ...tests.map(
+      (t) =>
+        `| ${t.verdict} | ${t.test_name || t.test_id} | ${t.runs} | ${t.failures} | ${t.flakes} | ${t.recommended_action} |`,
+    ),
+    '',
+    '> A test that never passes is NOT flaky. It is reporting something, and it is',
+    '> never quarantined automatically.',
+  ];
+
+  const document = await vscode.workspace.openTextDocument({
+    content: lines.join('\n'),
+    language: 'markdown',
+  });
+  await vscode.window.showTextDocument(document, { preview: true });
+
+  const candidates = (report.quarantine_candidates ?? []) as Record<string, any>[];
+  if (!candidates.length) {
+    return;
+  }
+  const picked = await vscode.window.showInformationMessage(
+    `Quarantine ${candidates.length} intermittent test(s)? Consistently failing tests are left alone.`,
+    'Quarantine them',
+    'Not now',
+  );
+  if (picked === 'Quarantine them') {
+    const result = await api.quarantine(id, { apply: true });
+    void vscode.window.showInformationMessage(`AI QA: ${result.summary}`);
+    refreshAll();
+  }
+}
+
+async function exploratoryTest(context: vscode.ExtensionContext): Promise<void> {
+  const id = projectId();
+  if (!id) {
+    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    return;
+  }
+  const report = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'AI QA: probing the application' },
+    () => api.exploratory(id),
+  );
+  const findings = (report.findings ?? []) as Record<string, any>[];
+
+  const lines: string[] = [
+    '# AI QA - exploratory pass',
+    '',
+    String(report.summary ?? ''),
+    '',
+  ];
+  if (findings.length) {
+    lines.push('| severity | kind | where | what | confidence |', '| --- | --- | --- | --- | --- |');
+    for (const f of findings) {
+      lines.push(`| ${f.severity} | ${f.kind} | \`${f.route}\` | ${f.title} | ${f.confidence} |`);
+    }
+    lines.push('', '## Evidence', '');
+    for (const f of findings) {
+      lines.push(`### ${f.title}`, '', '```', String(f.evidence ?? ''), '```', '');
+      const steps = (f.reproduction ?? []) as string[];
+      if (steps.length) {
+        lines.push('Reproduce:', ...steps.map((s) => `1. ${s}`), '');
+      }
+    }
+  } else {
+    lines.push('Nothing self-evidently broken was found.');
+  }
+  lines.push(
+    '',
+    '> Findings are limited to failures that need no specification to recognise:',
+    '> crashes, error pages, dead links, absent validation. A clean pass is not a',
+    '> claim that the application is correct.',
+  );
+
+  const document = await vscode.workspace.openTextDocument({
+    content: lines.join('\n'),
+    language: 'markdown',
+  });
+  await vscode.window.showTextDocument(document, { preview: true });
+
+  const next = (report.next_steps ?? []) as Record<string, any>[];
+  if (!next.length) {
+    return;
+  }
+  const choice = await vscode.window.showQuickPick(
+    next.map((n) => ({ label: String(n.finding), detail: String(n.instruction) })),
+    { title: 'Turn a finding into a permanent test?', placeHolder: 'Pick one, or press Escape' },
+  );
+  if (choice) {
+    await runInstruction(context, choice.detail);
+  }
+}
+
+async function batchFromEpic(): Promise<void> {
+  const id = projectId();
+  if (!id) {
+    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    return;
+  }
+  const epic = await vscode.window.showInputBox({
+    title: 'AI QA - automate a whole epic',
+    prompt: 'Jira epic key',
+    placeHolder: 'QA-100',
+    ignoreFocusOut: true,
+    validateInput: (v) => (/^[A-Z][A-Z0-9]+-\d+$/.test(v.trim().toUpperCase()) ? undefined : 'Expected something like QA-100'),
+  });
+  if (!epic) {
+    return;
+  }
+  // A batch is the most expensive thing the platform can do, so the extension
+  // shows the queue and its price and then hands off to the terminal, where the
+  // engineer can watch it and stop it.
+  const terminal = vscode.window.createTerminal({ name: 'AI QA batch' });
+  terminal.show();
+  terminal.sendText(`aiqa batch ${id} --epic ${epic.trim().toUpperCase()}`);
+  void vscode.window.showInformationMessage(
+    'AI QA: the batch will show you the queue and its estimated cost before it starts anything.',
+  );
+}
+
 async function showKnowledge(): Promise<void> {
   const id = projectId();
   if (!id) {
@@ -801,6 +1039,78 @@ async function doctor(): Promise<void> {
 }
 
 // =========================================================================== //
+// =========================================================================== //
+// Control plane lifecycle
+// =========================================================================== //
+async function ensureServer(): Promise<boolean> {
+  const started = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Window, title: 'AI QA: connecting to the control plane' },
+    () => server.ensure(),
+  );
+  if (started) {
+    if (server.isManaged) {
+      output.info('control plane started by the extension');
+    }
+    return true;
+  }
+
+  // Offer the two things that actually help, rather than a bare error.
+  const picked = await vscode.window.showWarningMessage(
+    `AI QA cannot reach the control plane at ${api.baseUrl}.${server.error ? ` ${server.error}` : ''}`,
+    'Start it',
+    'Show log',
+  );
+  if (picked === 'Start it') {
+    return startServer();
+  }
+  if (picked === 'Show log') {
+    output.show(true);
+  }
+  return false;
+}
+
+async function startServer(): Promise<boolean> {
+  const ok = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'AI QA: starting the control plane' },
+    () => server.start(),
+  );
+  if (ok) {
+    void vscode.window.showInformationMessage(`AI QA control plane running at ${api.baseUrl}`);
+    await connectBanner();
+    refreshAll();
+  } else {
+    const picked = await vscode.window.showErrorMessage(
+      `AI QA could not start the control plane. ${server.error}`,
+      'Show log',
+    );
+    if (picked) {
+      output.show(true);
+    }
+  }
+  return ok;
+}
+
+function stopServer(): void {
+  if (!server.isManaged) {
+    void vscode.window.showInformationMessage(
+      'The control plane was not started by this extension, so it was left running.',
+    );
+    return;
+  }
+  server.stop();
+  void vscode.window.showInformationMessage('AI QA control plane stopped.');
+  void connectBanner();
+}
+
+async function restartServer(): Promise<void> {
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'AI QA: restarting the control plane' },
+    () => server.restart(),
+  );
+  await connectBanner();
+  refreshAll();
+}
+
 async function connectBanner(): Promise<void> {
   try {
     const health = await api.health();

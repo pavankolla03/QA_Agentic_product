@@ -324,8 +324,11 @@ class TestPlan(Base):
     page_objects_needed: list[str] = Field(default_factory=list)
     page_objects_reused: list[str] = Field(default_factory=list)
     fixtures_reused: list[str] = Field(default_factory=list)
-    api_checks: list[str] = Field(default_factory=list)
-    db_checks: list[str] = Field(default_factory=list)
+    #: Structured checks (`{"path": ..., "method": ...}`) that the code generator
+    #: renders into real spec files. Plain strings are still accepted so that
+    #: plans stored before those became first-class outputs still load.
+    api_checks: list[dict[str, Any] | str] = Field(default_factory=list)
+    db_checks: list[dict[str, Any] | str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     coverage_notes: str = ""
     created_at: datetime = Field(default_factory=utcnow)

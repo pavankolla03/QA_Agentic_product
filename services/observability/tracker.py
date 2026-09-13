@@ -133,6 +133,23 @@ class RunTracker:
                     )
         return event
 
+    def _publish_progress(self, agent: AgentName, progress: float | None) -> None:
+        """Record which agent is active, for clients that poll rather than stream.
+
+        Best-effort by design: progress reporting must never be the thing that
+        fails a run.
+        """
+        if not self.run_id:
+            return
+        with contextlib.suppress(Exception):
+            with session_scope() as session:
+                row = session.get(RunRow, self.run_id)
+                if row is None:
+                    return
+                row.current_agent = agent.value
+                if progress is not None:
+                    row.progress = float(progress)
+
     def log(self, message: str, level: Severity = Severity.INFO, **data: Any) -> RunEvent:
         return self.emit("log", message, level=level, data=data or None)
 
@@ -159,6 +176,12 @@ class RunTracker:
         self._current_trace_id, self._current_agent = trace.id, agent
 
         started = time.perf_counter()
+        # Publish the active agent on the run row itself. Events are the richer
+        # signal, but every polling client — the status bar, the Runs panel, CI
+        # — reads the row, and the row only learned the agent's name when the
+        # run *finished*. On free models a run takes minutes, so that meant
+        # minutes of a spinner with nothing next to it.
+        self._publish_progress(agent, progress)
         self.emit("agent_started", f"{agent.value} started", agent=agent, progress=progress,
                   data={"trace_id": trace.id, "sequence": trace.sequence})
         try:

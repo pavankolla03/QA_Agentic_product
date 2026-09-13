@@ -143,6 +143,11 @@ class ModelRouter:
         self.retries = int(defaults.get("retries", 2))
         self.prompt_caching = bool(defaults.get("prompt_caching", True))
         self.cache_min_chars = int(defaults.get("cache_min_chars", 2000))
+        # When set, a model with a non-zero price is never selected, whatever
+        # the tier lists. A cost ceiling of zero cannot express this: zero
+        # disables the ceiling, so it would permit paid models rather than
+        # forbid them. This is the switch that actually holds the line.
+        self.free_only = bool(defaults.get("free_only", False))
 
         self._aliases: dict[str, str] = dict(self.config.get("aliases", {}) or {})
         self._task_capability: dict[str, str] = dict(self.config.get("task_capability", {}) or {})
@@ -174,7 +179,11 @@ class ModelRouter:
         if name == "ollama":
             built = OllamaProvider(base_url=s.ollama_base_url, default_model=s.ollama_model)
         elif name == "openrouter":
-            built = OpenRouterProvider(api_key=s.openrouter_api_key, default_model=s.openrouter_model)
+            built = OpenRouterProvider(
+                api_key=s.openrouter_api_key,
+                api_keys=getattr(s, "openrouter_api_keys", None),
+                default_model=s.openrouter_model,
+            )
         elif name == "openai":
             built = OpenAIProvider(api_key=s.openai_api_key, default_model=s.openai_model)
         elif name == "anthropic":
@@ -309,6 +318,13 @@ class ModelRouter:
     async def _usable(self, candidate: ModelCandidate) -> bool:
         provider = self.provider(candidate.provider)
         if provider is None or not provider.configured:
+            return False
+        if self.free_only and not candidate.free:
+            # Configured to spend nothing. Skipping is right rather than
+            # failing: the tier's free fallbacks are still available.
+            return False
+        if not provider.model_available(candidate.model):
+            # This model is rate limited; the next entry in the tier is not.
             return False
         quota = self.quotas.get(candidate.provider)
         # Free models on a request-limited provider stop being an option once we

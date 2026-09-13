@@ -32,6 +32,20 @@ def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
+def _env_list(base: str, limit: int = 8) -> list[str]:
+    """`BASE`, then `BASE_2`..`BASE_N`, in order, skipping blanks.
+
+    Duplicates are dropped: the same key twice is one allowance, not two, and
+    treating it as two would make the router think it has headroom it does not.
+    """
+    found: list[str] = []
+    for name in (base, *(f"{base}_{n}" for n in range(2, limit + 1))):
+        value = _env(name).strip()
+        if value and value not in found:
+            found.append(value)
+    return found
+
+
 def _env_float(key: str, default: float) -> float:
     try:
         return float(os.environ.get(key, default))
@@ -65,7 +79,12 @@ class Settings:
         self.default_provider = _env("AIQA_DEFAULT_PROVIDER", "ollama")
         self.ollama_base_url = _env("OLLAMA_BASE_URL", "http://localhost:11434")
         self.ollama_model = _env("OLLAMA_MODEL", "qwen2.5-coder:7b")
-        self.openrouter_api_key = _env("OPENROUTER_API_KEY")
+        # A free tier is limited per key, not per account, so several keys are
+        # several allowances. `OPENROUTER_API_KEY` plus any `OPENROUTER_API_KEY_2`,
+        # `_3`, ... are collected in order; the first is still the primary, so
+        # nothing changes for a single-key install.
+        self.openrouter_api_keys = _env_list("OPENROUTER_API_KEY")
+        self.openrouter_api_key = self.openrouter_api_keys[0] if self.openrouter_api_keys else ""
         self.openrouter_model = _env("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free")
         self.openai_api_key = _env("OPENAI_API_KEY")
         self.openai_model = _env("OPENAI_MODEL", "gpt-4o-mini")

@@ -72,6 +72,9 @@ class RunMetrics:
     by_tier: dict[str, int] = field(default_factory=dict)
     reused_index: bool = False
     reused_appmap: bool = False
+    #: False when the run answered from the Test Knowledge Store instead of
+    #: paying for the design call. The single largest per-run saving.
+    designed_this_run: bool = True
     duplicates_dropped: int = 0
 
     @property
@@ -194,12 +197,14 @@ async def benchmark(runs: int, live: bool, keep: bool) -> int:
             notes = " ".join(metadata.get("notes", []))
             measurement.reused_index = "reused cached map" in notes or "unchanged" in notes
             measurement.reused_appmap = "application map hit" in notes or "no crawl needed" in notes
+            measurement.designed_this_run = "design skipped" not in notes
 
         metrics.append(measurement)
         reuse_flags = "".join(
             [
                 "idx " if measurement.reused_index else "",
                 "app " if measurement.reused_appmap else "",
+                "" if measurement.designed_this_run else "no-design ",
                 f"dup-{measurement.duplicates_dropped}" if measurement.duplicates_dropped else "",
             ]
         ) or "-"
@@ -229,21 +234,32 @@ async def benchmark(runs: int, live: bool, keep: bool) -> int:
         # the honest measure.
         total_designed = sum(m.scenarios for m in metrics)
         total_dropped = sum(m.duplicates_dropped for m in metrics)
+        skipped_designs = sum(1 for m in later if not getattr(m, "designed_this_run", True))
         attempted = total_designed + total_dropped
         print(f"  scenarios designed:  {total_designed}")
         print(f"  duplicates avoided:  {total_dropped} of {attempted} attempted "
               f"({100 * total_dropped / attempted if attempted else 0:.0f}% of design work skipped)")
-        print(f"  tokens per NEW scenario: run 1 {first.tokens_per_scenario:,.0f}  |  "
-              f"warm avg {sum(m.total_tokens for m in later) / max(1, sum(m.scenarios for m in later)):,.0f}")
+        warm_scenarios = sum(m.scenarios for m in later)
+        print(f"  design calls skipped:   {skipped_designs}/{len(later)} warm runs "
+              f"(the requirement was already covered)")
+        if warm_scenarios:
+            print(f"  tokens per NEW scenario: run 1 {first.tokens_per_scenario:,.0f}  |  "
+                  f"warm avg {sum(m.total_tokens for m in later) / warm_scenarios:,.0f}")
+        else:
+            # Dividing by zero new scenarios produced a meaningless number that
+            # looked like a catastrophic regression. Say what happened instead.
+            print("  tokens per NEW scenario: warm runs designed nothing new — every")
+            print("                           requirement was already covered.")
         if not live:
             print()
-            print("  NOTE on the warm per-run token figure in offline mode:")
-            print("   The deterministic provider emits a fixed 5-scenario template regardless of the")
-            print("   'do not redesign what already exists' instruction in the prompt. Warm runs therefore")
-            print("   still pay full design cost and then discard 4 of 5 scenarios as duplicates. A real")
-            print("   model honours that instruction, so this figure understates the architecture.")
-            print("   The caching numbers below (index/app-map hits, context avoided) are NOT affected")
-            print("   by the provider and are the trustworthy signal in offline mode.")
+            print("  NOTE on the warm figures in offline mode:")
+            print("   The deterministic provider emits a fixed scenario template, so when a warm run")
+            print("   DOES reach the design call it pays full price and then discards most of the")
+            print("   result as duplicates. A real model honours the 'do not redesign what already")
+            print("   exists' instruction, so the warm token figure understates the architecture.")
+            print("   Runs where design was skipped entirely are not affected by this: that decision")
+            print("   is deterministic, and so are the caching numbers below. Those are the")
+            print("   trustworthy signals in offline mode.")
         print()
         print(f"  index cache hits:       {sum(1 for m in later if m.reused_index)}/{len(later)} warm runs")
         print(f"  application map hits:   {sum(1 for m in later if m.reused_appmap)}/{len(later)} warm runs")

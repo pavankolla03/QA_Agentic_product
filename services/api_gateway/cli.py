@@ -661,6 +661,80 @@ def knowledge_show(project_id: str = typer.Argument(..., help="Project id")) -> 
             console.print(f"  {component} ({scope})")
 
 
+@knowledge_app.command("coverage")
+def coverage_gaps(
+    project_id: str = typer.Argument(..., help="Project id"),
+    severity: str = typer.Option("", help="Only show gaps at this severity: high | medium | low"),
+    fail_on_high: bool = typer.Option(
+        False, help="Exit non-zero when a high-severity gap exists (for CI)."
+    ),
+) -> None:
+    """What the suite does not cover, worst first."""
+    _bootstrap()
+    from services.knowledge_service.application_map import ApplicationMap
+    from services.knowledge_service.coverage import analyse_coverage
+    from services.knowledge_service.test_knowledge import QAKnowledgeGraph, TestKnowledgeStore
+    from services.observability.db import session_scope
+    from services.observability.models import ProjectRow
+
+    with session_scope() as session:
+        row = session.get(ProjectRow, project_id)
+        if row is None:
+            console.print(f"[red]no such project:[/red] {project_id}")
+            raise typer.Exit(1)
+        repo_path = row.repository_path
+        name = row.name
+
+    report = analyse_coverage(
+        ApplicationMap.load(repo_path),
+        TestKnowledgeStore(project_id),
+        QAKnowledgeGraph(project_id),
+    )
+
+    console.print(Panel.fit(f"[bold]Coverage — {name}[/bold]\n{report.summary()}", border_style="cyan"))
+
+    table = Table(box=None, pad_edge=False)
+    table.add_column("what", style="dim")
+    table.add_column("covered", justify="right")
+    table.add_column("total", justify="right")
+    table.add_column("%", justify="right")
+    table.add_row("routes", str(report.routes_covered), str(report.routes_total), f"{report.route_pct}%")
+    table.add_row("endpoints", str(report.endpoints_covered), str(report.endpoints_total), f"{report.endpoint_pct}%")
+    table.add_row("components", str(report.components_covered), str(report.components_total), "")
+    table.add_row(
+        "requirements", str(report.requirements_covered), str(report.requirements_total),
+        f"{report.requirement_pct}%",
+    )
+    console.print(table)
+
+    gaps = [g for g in report.gaps if not severity or g.severity == severity]
+    if not gaps:
+        console.print("\n[green]no gaps at this severity[/green]")
+    else:
+        console.print(f"\n[bold]{len(gaps)} gap(s)[/bold]  (worst first)")
+        gap_table = Table(box=None, pad_edge=False)
+        gap_table.add_column("sev", style="bold")
+        gap_table.add_column("kind", style="dim")
+        gap_table.add_column("what", no_wrap=True)
+        gap_table.add_column("run this to close it", style="cyan")
+        colours = {"high": "red", "medium": "yellow", "low": "dim"}
+        for gap in gaps:
+            gap_table.add_row(
+                f"[{colours.get(gap.severity, 'white')}]{gap.severity}[/]",
+                gap.kind,
+                gap.label[:48],
+                gap.suggested_instruction[:60],
+            )
+        console.print(gap_table)
+
+    console.print(
+        "\n[dim]A route counted as covered has a test touching it — that is not the "
+        "same as being well tested.[/dim]"
+    )
+    if fail_on_high and report.by_severity("high"):
+        raise typer.Exit(2)
+
+
 @knowledge_app.command("reindex")
 def knowledge_reindex(
     project_id: str = typer.Argument(..., help="Project id"),
@@ -751,6 +825,249 @@ def cost_management(days: int = typer.Option(30, help="Window in days")) -> None
             border_style="dim",
         )
     )
+
+
+@app.command()
+def explore(
+    project_id: str = typer.Argument(..., help="Project id"),
+    max_probes: int = typer.Option(40, help="Cap on how many probes to run."),
+    fail_on_finding: bool = typer.Option(False, help="Exit non-zero if anything confirmed is found."),
+) -> None:
+    """Look for self-evidently broken things, with no requirement to work from."""
+    _bootstrap()
+    from services.execution_service.exploratory import explore as run_exploration
+    from services.execution_service.exploratory import regression_instruction
+    from services.knowledge_service.application_map import ApplicationMap
+    from services.observability.db import session_scope
+    from services.observability.models import ProjectRow
+
+    with session_scope() as session:
+        row = session.get(ProjectRow, project_id)
+        if row is None:
+            console.print(f"[red]no such project:[/red] {project_id}")
+            raise typer.Exit(1)
+        repo_path, base_url, name = row.repository_path, row.base_url, row.name
+
+    app_map = ApplicationMap.load(repo_path)
+    if app_map is None:
+        console.print(
+            "[yellow]This project has never been explored, so there is nothing to probe.[/yellow]\n"
+            "[dim]Run an automation first, or `aiqa run` with a base URL configured.[/dim]"
+        )
+        raise typer.Exit(0)
+    if not base_url:
+        console.print("[red]this project has no base_url configured[/red]")
+        raise typer.Exit(1)
+
+    report = run_exploration(app_map, base_url, max_probes=max_probes)
+    console.print(
+        Panel.fit(f"[bold]Exploratory pass — {name}[/bold]\n{report.summary()}", border_style="cyan")
+    )
+
+    if report.findings:
+        colours = {"critical": "red", "high": "red", "medium": "yellow", "low": "dim", "observation": "dim"}
+        table = Table(box=None, pad_edge=False)
+        table.add_column("severity", style="bold")
+        table.add_column("kind", style="dim")
+        table.add_column("where", no_wrap=True)
+        table.add_column("what")
+        for finding in report.findings:
+            marker = "" if finding.confidence == "confirmed" else " [dim](observation)[/dim]"
+            table.add_row(
+                f"[{colours.get(finding.severity, 'white')}]{finding.severity}[/]",
+                finding.kind,
+                finding.route[:28],
+                finding.title[:60] + marker,
+            )
+        console.print(table)
+
+        console.print("\n[bold]To turn a confirmed finding into a permanent test:[/bold]")
+        for finding in report.confirmed[:5]:
+            console.print(f'  aiqa run {project_id} "{regression_instruction(finding)}"')
+
+    if report.unreachable:
+        console.print(f"\n[dim]{len(report.unreachable)} probe(s) could not be reached[/dim]")
+
+    console.print(
+        "\n[dim]Findings are limited to failures that need no specification to recognise: "
+        "crashes, error pages, dead links, absent validation. A clean pass is not a "
+        "claim that the application is correct.[/dim]"
+    )
+    if fail_on_finding and report.confirmed:
+        raise typer.Exit(2)
+
+
+@app.command()
+def batch(
+    project_id: str = typer.Argument(..., help="Project id"),
+    epic: str = typer.Option("", help="Jira epic key — automate every issue under it."),
+    from_file: str = typer.Option("", help="Text file, one requirement per line."),
+    mode: str = typer.Option("full", help="Run mode for every item."),
+    max_cost_usd: float = typer.Option(5.0, help="Ceiling for the WHOLE batch, not per run."),
+    max_items: int = typer.Option(25, help="Never queue more than this many."),
+    auto_approve: bool = typer.Option(False, help="Approve every gate automatically."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    """Automate a whole epic instead of one ticket at a time.
+
+    Prints the queue and its expected cost, then asks before spending anything.
+    """
+    _bootstrap()
+    import asyncio
+    from pathlib import Path as _Path
+
+    from services.agent_engine.batch import execute_batch, plan_batch
+    from services.agent_engine.engine import AgentEngine
+    from services.observability.db import session_scope
+    from services.observability.models import ProjectRow
+
+    requirements: list[dict] = []
+    if epic:
+        from tools.base import ToolContext
+        from tools.jira.jira_tools import JiraFetchEpicTool
+
+        with session_scope() as session:
+            row = session.get(ProjectRow, project_id)
+            if row is None:
+                console.print(f"[red]no such project:[/red] {project_id}")
+                raise typer.Exit(1)
+            repo_path = row.repository_path
+        result = JiraFetchEpicTool().run(ToolContext(workspace_root=repo_path), epic_key=epic,
+                                         max_issues=max_items)
+        if not result.ok:
+            console.print(f"[red]{result.error}[/red]")
+            raise typer.Exit(1)
+        requirements = result.data["issues"]
+        console.print(f"[dim]{epic}: {len(requirements)} issue(s)[/dim]")
+    elif from_file:
+        path = _Path(from_file)
+        if not path.exists():
+            console.print(f"[red]no such file:[/red] {from_file}")
+            raise typer.Exit(1)
+        requirements = [
+            {"key": f"L{i}", "instruction": line.strip()}
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    else:
+        console.print("[red]give either --epic or --from-file[/red]")
+        raise typer.Exit(1)
+
+    plan = plan_batch(project_id, requirements, mode=mode,
+                      max_cost_usd=max_cost_usd, max_items=max_items)
+    if not plan.items:
+        console.print("[yellow]nothing to run[/yellow]")
+        raise typer.Exit(0)
+
+    table = Table(box=None, pad_edge=False)
+    table.add_column("#", justify="right", style="dim")
+    table.add_column("key", no_wrap=True)
+    table.add_column("priority")
+    table.add_column("what")
+    for index, item in enumerate(plan.items, start=1):
+        table.add_row(str(index), item.key, item.priority, item.instruction.splitlines()[0][:64])
+    console.print(table)
+
+    console.print(
+        f"\n[bold]{len(plan.items)} run(s)[/bold], estimated "
+        f"[bold]${plan.estimated_cost_usd:.2f}[/bold]  [dim]({plan.estimate_basis})[/dim]"
+    )
+    console.print(f"batch ceiling: ${max_cost_usd:.2f}  ·  runs stop once it is reached")
+    if not plan.within_budget:
+        console.print(
+            "[yellow]The estimate exceeds the ceiling. The batch will run in priority "
+            "order and stop when the ceiling is hit.[/yellow]"
+        )
+
+    if not yes and not typer.confirm("\nStart this batch?", default=False):
+        console.print("[dim]nothing started[/dim]")
+        raise typer.Exit(0)
+
+    engine = AgentEngine()
+    result = asyncio.run(execute_batch(engine, plan, auto_approve=auto_approve))
+
+    console.print(Panel.fit(f"[bold]{result.summary()}[/bold]", border_style="cyan"))
+    outcome = Table(box=None, pad_edge=False)
+    outcome.add_column("key", no_wrap=True)
+    outcome.add_column("status")
+    outcome.add_column("scenarios", justify="right")
+    outcome.add_column("cost", justify="right")
+    outcome.add_column("note")
+    colours = {"succeeded": "green", "no_work": "yellow", "failed": "red", "skipped": "dim"}
+    for item in [*result.completed, *result.failed, *result.skipped]:
+        outcome.add_row(
+            item.key,
+            f"[{colours.get(item.status, 'white')}]{item.status}[/]",
+            str(item.scenarios),
+            f"${item.cost_usd:.4f}",
+            (item.error or "")[:44],
+        )
+    console.print(outcome)
+    if result.failed:
+        raise typer.Exit(1)
+
+
+@app.command("suite-health")
+def suite_health_command(
+    project_id: str = typer.Argument(..., help="Project id"),
+    quarantine: bool = typer.Option(False, help="Apply the quarantine recommendations."),
+    fail_on_broken: bool = typer.Option(False, help="Exit non-zero if a test never passes."),
+) -> None:
+    """How trustworthy the suite is, and which tests are eroding that."""
+    _bootstrap()
+    from services.execution_service.suite_health import auto_quarantine, suite_health
+
+    report = suite_health(project_id)
+    console.print(
+        Panel.fit(
+            f"[bold]Suite health — {report.health_score}%[/bold]\n{report.summary()}",
+            border_style="cyan",
+        )
+    )
+    if not report.tests:
+        console.print("[dim]Run the suite at least once to build a history.[/dim]")
+        return
+
+    colours = {
+        "broken": "red",
+        "quarantine_candidate": "yellow",
+        "unreliable": "yellow",
+        "healthy": "green",
+        "unproven": "dim",
+    }
+    table = Table(box=None, pad_edge=False)
+    table.add_column("verdict", style="bold")
+    table.add_column("test", no_wrap=True)
+    table.add_column("runs", justify="right")
+    table.add_column("fail", justify="right")
+    table.add_column("flake", justify="right")
+    table.add_column("what to do")
+    for test in report.tests[:30]:
+        table.add_row(
+            f"[{colours.get(test.verdict, 'white')}]{test.verdict}[/]",
+            (test.test_name or test.test_id)[:38],
+            str(test.runs),
+            str(test.failures),
+            str(test.flakes),
+            test.recommended_action[:54],
+        )
+    console.print(table)
+
+    console.print(
+        "\n[dim]A test that never passes is NOT flaky — it is reporting something. "
+        "Those are never quarantined automatically.[/dim]"
+    )
+
+    if quarantine:
+        result = auto_quarantine(project_id, apply=True)
+        console.print(f"\n[bold]{result['summary']}[/bold]")
+        for test_id in result["quarantined"]:
+            console.print(f"  quarantined {test_id}")
+        for test_id in result["skipped_broken"]:
+            console.print(f"  [red]left alone (never passes):[/red] {test_id}")
+
+    if fail_on_broken and report.of_verdict("broken"):
+        raise typer.Exit(2)
 
 
 @app.command()

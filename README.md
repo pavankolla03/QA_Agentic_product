@@ -149,6 +149,33 @@ Modes: `plan_only`, `generate`, `full`, `autonomous`, `execute_only`, `heal_only
 
 ---
 
+## What gets generated
+
+| File | When | Notes |
+|---|---|---|
+| `tests/features/*.feature` | always | byte-for-byte the Gherkin that was approved; never written empty |
+| `tests/pages/*Page.ts` | always | one route per Page Object; locators only from the verified catalogue |
+| `tests/steps/*.steps.ts` | always | steps call Page Object methods; a step that cannot bind is a `TODO`, never broken code |
+| `tests/data/*.json` | data-driven scenarios | Examples tables, extracted |
+| `tests/api/*.api.spec.ts` | an observed endpoint is planned | Playwright `request` fixture; unobserved paths are dropped |
+| `tests/api/*.db.spec.ts` | a database check is planned | against your own `queryRows` helper |
+| `tests/visual/*.visual.spec.ts` | opt-in, and the route is settled | `toHaveScreenshot()`, dynamic regions masked |
+
+---
+
+## Beyond one feature at a time
+
+| Command | What it does |
+|---|---|
+| `aiqa batch <project> --epic QA-100` | every issue under a Jira epic, priority-ordered, with a batch-wide cost ceiling and a preview before it spends anything |
+| `aiqa knowledge coverage <project>` | what the suite does *not* cover — routes, endpoints, shared components, requirements — each with the run that would close it |
+| `aiqa suite-health <project>` | per-test verdicts and quarantine advice; a test that never passes is `broken`, never quarantined |
+| `aiqa explore <project>` | probes the running application with no requirement, looking for crashes, error pages, dead links and absent validation |
+
+Each has a `--fail-on-*` flag so it can gate CI.
+
+---
+
 ## Safety model
 
 Enforced in code, not in prompts.
@@ -248,6 +275,7 @@ SQLite by default; PostgreSQL is a connection-string change.
 
 ## Documentation
 
+- **[Manual testing guide](docs/MANUAL_TESTING.md)** — the configured setup on this machine, start to finish
 - **[Getting started](docs/GETTING_STARTED.md)** — clone to first suite in ~10 minutes
 - **[Cost optimization](docs/cost-optimization.md)** — how the spend is controlled, and how to tune it
 - **[Architecture](docs/ARCHITECTURE.md)** — why it is built this way, and how to extend it
@@ -261,8 +289,18 @@ Stated plainly, because a QA tool that overstates itself is worse than useless.
 
 - **Mobile is architecture, not execution.** The capability contract and scaffolding
   exist; running against a real Appium grid does not.
-- **API and DB testing are tools, not generated suites.** The Test Design Agent
-  plans them; the Code Generation Agent still emits UI artifacts only.
+- **API tests only reach endpoints the application revealed.** Endpoints are taken
+  from form actions observed during exploration. One reached only by client-side
+  `fetch` is absent rather than guessed at, and a write endpoint is generated as
+  `test.fixme` until someone supplies a valid request body.
+- **Database checks are parameterised, not connected.** The platform has no schema
+  and no credentials, so it emits the table, predicate and expected row count
+  against a `queryRows` helper the project supplies. Until that exists the file
+  does not compile — deliberately, because a database check that silently does
+  nothing is worse than none.
+- **Visual regression is off by default.** A screenshot baseline is a commitment
+  to review it on every intentional design change. Enable it in `standards.yaml`,
+  and only routes whose markup repeated across explorations are baselined.
 - **Exploration needs a reachable application.** Without one, locators are marked
   `TODO(aiqa)` rather than invented.
 - **Offline mode is a floor, not a substitute.** It guarantees a working pipeline
@@ -272,3 +310,9 @@ Stated plainly, because a QA tool that overstates itself is worse than useless.
   that means leaving a test red.
 - **Cost savings are measured, not projected.** `scripts/benchmark.py` reports real
   request and token counts; dollar figures require `--live` with your own providers.
+- **Exploratory testing finds only self-evident failures.** With no requirement to
+  check against, it reports crashes, server error pages, dead links and absent
+  validation on required fields. A clean pass is not a claim that the application
+  is correct.
+- **Coverage means "a test touches this", not "this is well tested".** The report
+  says so on every screen it appears on.

@@ -1,88 +1,112 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Model Routing Policy — cost-optimized.
+# Model Routing Policy — free models only.
 #
-# The platform spends money only where reasoning actually changes the outcome.
-# Four tiers, in descending cost order:
+# Every model below costs nothing. No paid provider appears in any tier, so a
+# misconfiguration cannot silently start spending: there is nothing to spend.
 #
-#   reasoning  paid, high-value judgement    — requirement analysis, test architecture,
-#                                              root-cause analysis, self-healing decisions
-#   coding     specialized code model        — TypeScript/Playwright/POM/steps generation
-#   cheap      free or near-free             — summarization, classification, metadata,
-#                                              report prose, low-risk transformations
-#   embedding  vectors for retrieval         — repository/application knowledge
+# The four tiers still exist, because "free" does not mean "interchangeable".
+# A 120B model and a 2.6B model are both free and are not remotely the same
+# thing, so the tiers now rank by *capability* rather than by price:
 #
-# A fifth tier, `none`, is implicit and is the most important one: anything
-# deterministic (file IO, git, npm, tsc, eslint, parsing, cost math, notifications)
-# never reaches this file at all.
+#   reasoning  strongest free models  — requirement analysis, test design,
+#                                       root-cause analysis, self-healing
+#   coding     code-capable models    — TypeScript/Playwright/POM generation
+#   cheap      fastest free models    — summarisation, classification,
+#                                       metadata, report prose
+#   embedding  local hashing          — no free embedding API exists, and a
+#                                       deterministic local embedder beats none
 #
-# Prices are USD per 1M tokens. Free/local models are 0.
+# A fifth tier, `none`, is implicit and is still the most important: anything
+# deterministic (file IO, git, npm, tsc, eslint, parsing, cost maths) never
+# reaches this file at all.
+#
+# ── How these models were chosen ────────────────────────────────────────────
+# Not from their names. `python -m scripts.qualify_models` sends every free
+# model on OpenRouter the two requests this platform actually makes — a
+# structured-output request and a code-planning request — and reports which
+# return parseable JSON. Only models that passed are listed here.
+#
+# The free catalogue churns constantly: models appear, become paid and get
+# retired, and every model in the previous version of this file had stopped
+# being free. When runs start failing for no obvious reason, re-run that script
+# and update this file. These entries were qualified on 2026-09-13.
 # ─────────────────────────────────────────────────────────────────────────────
-version: 2
+version: 3
 
 defaults:
+  # Refuse to select any model with a non-zero price, whatever a tier lists.
+  # This is enforced in the router, so adding a paid model to a route below
+  # cannot start spending by accident — it will simply never be chosen.
+  free_only: true
   temperature: 0.1
   max_tokens: 4096
-  timeout_seconds: 180
+  # Free models are markedly slower than paid ones. A timeout here is a failed
+  # run, not a cheaper one, so this is generous.
+  timeout_seconds: 300
   retries: 2
-  # Providers that support it are asked to cache the static prefix of a prompt
-  # (standards, conventions, application map) so repeated runs pay for it once.
   prompt_caching: true
   cache_min_chars: 2000
 
 # ── Tier definitions ────────────────────────────────────────────────────────
+# Ordered: the router tries each in turn and falls through on failure. The
+# fallback chain matters more than usual here, because any free model can be
+# rate limited at any moment.
 routes:
-  # High-value reasoning. Worth paying for; used sparingly and with tight budgets.
   reasoning:
-    - { provider: openrouter, model: "z-ai/glm-4.6",                       in: 0.40, out: 1.75, caching: true }
-    - { provider: anthropic,  model: "claude-sonnet-5",                    in: 3.00, out: 15.00, caching: true }
-    - { provider: openrouter, model: "deepseek/deepseek-r1:free",          in: 0,    out: 0 }
-    - { provider: ollama,     model: "qwen2.5-coder:14b",                  in: 0,    out: 0 }
-    - { provider: mock,       model: "mock-reasoning",                     in: 0,    out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-pro:free",                          in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
+    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
+    - { provider: mock,       model: "mock-reasoning",                                     in: 0, out: 0 }
 
-  # Code generation. A specialized coding model beats a generalist per dollar.
+  # `north-mini-code` is code-specialised and passed the code-planning probe;
+  # the 120B general model sits behind it as the strongest all-rounder.
   coding:
-    - { provider: openrouter, model: "qwen/qwen-2.5-coder-32b-instruct",   in: 0.06, out: 0.18 }
-    - { provider: openrouter, model: "qwen/qwen-2.5-coder-32b-instruct:free", in: 0, out: 0 }
-    - { provider: ollama,     model: "qwen2.5-coder:7b",                   in: 0,    out: 0 }
-    - { provider: anthropic,  model: "claude-sonnet-5",                    in: 3.00, out: 15.00, caching: true }
-    - { provider: mock,       model: "mock-coding",                        in: 0,    out: 0 }
+    - { provider: openrouter, model: "cohere/north-mini-code:free",                        in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
+    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
+    - { provider: mock,       model: "mock-coding",                                        in: 0, out: 0 }
 
-  # Low-risk, high-volume. Should be free in steady state.
+  # Ordered by measured latency, fastest first: these calls are frequent, so
+  # seconds compound across a run.
   cheap:
-    - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free", in: 0, out: 0 }
-    - { provider: ollama,     model: "qwen2.5-coder:7b",                   in: 0,    out: 0 }
-    - { provider: openrouter, model: "z-ai/glm-4.6",                       in: 0.40, out: 1.75 }
-    - { provider: openai,     model: "gpt-4o-mini",                        in: 0.15, out: 0.60 }
-    - { provider: mock,       model: "mock-cheap",                         in: 0,    out: 0 }
+    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
+    - { provider: openrouter, model: "liquid/lfm-2.5-2.6b:free",                           in: 0, out: 0 }
+    - { provider: openrouter, model: "openrouter/free",                                    in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
+    - { provider: mock,       model: "mock-cheap",                                         in: 0, out: 0 }
 
+  # OpenRouter has no free embedding endpoint. The local hashing embedder is
+  # deterministic and costs nothing; retrieval quality is lower than a real
+  # embedding model, which is a deliberate trade rather than an oversight.
   embedding:
-    - { provider: ollama,     model: "nomic-embed-text",                   in: 0,    out: 0, dim: 768 }
-    - { provider: openai,     model: "text-embedding-3-small",             in: 0.02, out: 0, dim: 1536 }
-    - { provider: hashing,    model: "local-hash-512",                     in: 0,    out: 0, dim: 512 }
+    - { provider: ollama,     model: "nomic-embed-text",                                   in: 0, out: 0, dim: 768 }
+    - { provider: hashing,    model: "local-hash-512",                                     in: 0, out: 0, dim: 512 }
 
-# Backwards-compatible aliases (v1 called these fast/reasoning/coding).
 aliases:
   fast: cheap
 
 # ── Which tier each agent gets by default ───────────────────────────────────
-# The floor, not the ceiling: an agent may escalate for a genuinely complex task
-# (see `escalation` below) and is downgraded when the task is trivial.
 agent_capability:
   orchestrator:      cheap
   requirement:       reasoning
   repository:        cheap        # structure comes from parsers, not the model
-  exploration:       cheap        # the browser does the work; the model only picks targets
+  exploration:       cheap        # the browser does the work; the model picks targets
   test_design:       reasoning
   code_generation:   coding
-  standards:         cheap        # static analysis first; LLM only for semantic rules
+  standards:         cheap        # static analysis first
   execution:         cheap        # deterministic; almost never calls a model
   failure_analysis:  reasoning
   self_healing:      reasoning
   reporting:         cheap
 
 # ── Task-level overrides ────────────────────────────────────────────────────
-# Finer-grained than per-agent: a single agent may run both a cheap and an
-# expensive call. Keys are the `task` string passed to the router.
 task_capability:
   requirement.analyze:            reasoning
   requirement.classify:           cheap
@@ -92,7 +116,8 @@ task_capability:
   test_design.plan:               reasoning
   test_design.batch:              reasoning
   test_design.dedupe:             cheap
-  code_generation.page_objects:   coding
+  code_generation.plan:           coding   # one call: page objects + step bindings
+  code_generation.page_objects:   coding   # legacy, kept for older runs
   code_generation.steps:          coding
   code_generation.fixtures:       coding
   standards.semantic:             cheap
@@ -103,44 +128,54 @@ task_capability:
   reporting.summarize:            cheap
 
 # ── Escalation ──────────────────────────────────────────────────────────────
-# Complexity is scored deterministically (prompt size, artifact count, retry
-# count, prior failure) before any call. Cheap work must not silently become
-# expensive, so escalation is bounded and always recorded in the trace.
+# Escalating costs nothing now, but it is still bounded: the reasoning models
+# are slower and more heavily rate limited, so sending trivial work to them
+# burns the daily allowance instead of money.
 escalation:
   enabled: true
-  # A `cheap` task escalates to `reasoning` only above this score (0..1).
   cheap_to_reasoning_threshold: 0.75
-  # A retry after a low-quality result may escalate one tier, at most once.
   escalate_on_retry: true
   max_escalations_per_run: 3
 
 # ── Provider request budgets ────────────────────────────────────────────────
-# OpenRouter's free tier is request-limited, not token-limited. Track requests
-# and reroute before hitting the wall rather than failing mid-run.
+# The free tier is request-limited, and the limit is PER KEY. Two keys are two
+# allowances: the provider rotates when one is exhausted (see
+# packages/llm_provider/keyring.py), so this ceiling is per key.
 provider_limits:
   openrouter:
-    free_requests_daily: 3000
-    # Below this many remaining free requests, route free-tier work elsewhere.
-    reserve_threshold: 200
+    free_requests_daily: 1000
+    # Stop using a key slightly before it is empty, so rotation happens between
+    # requests rather than in the middle of one.
+    reserve_threshold: 25
   ollama:
     concurrent_requests: 2
 
-# ── Default per-run budget (a project or request may lower it) ──────────────
+# ── Default per-run budget ──────────────────────────────────────────────────
 run_budget:
-  max_requests: 40
-  max_input_tokens: 400000
-  max_output_tokens: 120000
-  max_cost_usd: 2.00
+  max_requests: 60
+  max_input_tokens: 600000
+  max_output_tokens: 200000
+  # 0 disables the cost ceiling, which is correct here only because
+  # `free_only: true` above already makes a paid call impossible. The ceiling
+  # is the wrong tool for this job: it triggers on spend that has already
+  # happened, whereas free_only prevents the call.
+  max_cost_usd: 0.0
   max_retries: 2
-  # Hard caps that protect against runaway loops.
   max_correction_attempts: 3
   max_healing_attempts: 2
   max_execution_retries: 3
 
+# ── Reuse policy ────────────────────────────────────────────────────────────
+# Still worth having with free models: the scarce resource is now the daily
+# request allowance rather than dollars.
+reuse:
+  skip_design: true
+  skip_design_similarity: 0.80
+  skip_design_coverage: 1.0
+  min_remembered_scenarios: 3
+
 # ── Measured cost baseline ──────────────────────────────────────────────────
 # Reference point supplied by the user: ~30,000 credits for 110 test cases.
-# `scripts/benchmark.py` compares real runs against this. Savings are only
-# reported once measured.
 baseline:
   credits_total: 30000
   test_cases: 110

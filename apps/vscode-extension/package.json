@@ -242,6 +242,51 @@
       {
         "command": "aiqa.showPipeline",
         "title": "AI QA: Show Agent Pipeline"
+      },
+      {
+        "command": "aiqa.startServer",
+        "title": "Start Control Plane",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.stopServer",
+        "title": "Stop Control Plane",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.restartServer",
+        "title": "Restart Control Plane",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.showServerLog",
+        "title": "Show Control Plane Log",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.showCoverage",
+        "title": "Show Coverage Gaps",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.automateInstruction",
+        "title": "Automate This",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.showSuiteHealth",
+        "title": "Show Suite Health",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.exploratoryTest",
+        "title": "Run Exploratory Pass",
+        "category": "AI QA"
+      },
+      {
+        "command": "aiqa.batchFromEpic",
+        "title": "Automate a Jira Epic",
+        "category": "AI QA"
       }
     ],
     "menus": {
@@ -368,6 +413,21 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Route low-risk work to free/local models. Disable only if quality matters more than cost on every call."
+        },
+        "aiqa.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the AI QA control plane automatically when the extension activates. An already-running server is always reused, never replaced."
+        },
+        "aiqa.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Python interpreter used to start the control plane. Empty means: use a .venv in the repository root, else the system Python."
+        },
+        "aiqa.repositoryPath": {
+          "type": "string",
+          "default": "C:\\Users\\Pavan.Kolla\\Desktop\\QA_AI_Agents",
+          "description": "Path to the AI QA Engineer checkout to start the control plane from. Needed when the open workspace is your test repository rather than the platform itself."
         }
       }
     },

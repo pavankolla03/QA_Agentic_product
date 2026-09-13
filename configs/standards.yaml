@@ -28,6 +28,11 @@ naming:
   step_file: "kebab-case.steps.ts"
   test_id_prefix: "TC-"
   scenario_must_have_tag: true
+  # A design budget, not a hard cap. "Risk-based, not exhaustive" is easy to
+  # write in a prompt and easy for a model to ignore: one run produced 18
+  # scenarios for a single form, overran the output limit twice and had to be
+  # retried. Naming a number keeps the suite focused and the call in budget.
+  max_scenarios_per_feature: 10
 
 locators:
   strategy_priority:
@@ -144,3 +149,15 @@ review:
     - self_heal_apply
     - destructive_command
   auto_approve_below_risk: low
+
+# ── Visual regression ───────────────────────────────────────────────────────
+# Off by default. Screenshot baselines are a commitment: they must be reviewed
+# on every intentional design change, and a team that has not agreed to that
+# ends up deleting the tests instead of updating them.
+visual:
+  enabled: false
+  # A route must look identical this many explorations in a row before it is
+  # considered settled enough to baseline.
+  required_stable_visits: 2
+  max_routes: 6
+  max_diff_pixel_ratio: 0.01

@@ -228,8 +228,47 @@ class AgentEngine:
             return existing
         task = asyncio.create_task(self.execute(run_id))
         self._running[run_id] = task
-        task.add_done_callback(lambda _t: self._running.pop(run_id, None))
+        task.add_done_callback(self._on_task_done(run_id))
         return task
+
+    def _on_task_done(self, run_id: str) -> Callable[[asyncio.Task[GraphResult]], None]:
+        """Make sure a crashed background task is visible.
+
+        `execute` guards the orchestrator, but the work before it — loading the
+        project, building the context — is outside that guard. An exception
+        there kills the task, and because nobody awaits a fire-and-forget task
+        its exception is never retrieved: the row stays `running` and every
+        client polls it forever. A run that died should say so.
+        """
+
+        def done(task: asyncio.Task[GraphResult]) -> None:
+            self._running.pop(run_id, None)
+            if task.cancelled():
+                self._mark_failed(run_id, "run was cancelled before it finished")
+                return
+            error = task.exception()
+            if error is not None:
+                log.exception("run %s died outside the orchestrator", run_id, exc_info=error)
+                self._mark_failed(run_id, f"{type(error).__name__}: {error}")
+
+        return done
+
+    def _mark_failed(self, run_id: str, error: str) -> None:
+        """Record a terminal failure for a run that never got to persist one."""
+        try:
+            with session_scope() as session:
+                row = session.get(RunRow, run_id)
+                # Only a run still believed to be in flight: never overwrite a
+                # status the run itself already reached.
+                if row is not None and row.status in (
+                    RunStatus.RUNNING.value,
+                    RunStatus.QUEUED.value,
+                ):
+                    row.status = RunStatus.FAILED.value
+                    row.error = error[:1000]
+                    row.finished_at = _utcnow()
+        except Exception:  # noqa: BLE001 - last-ditch bookkeeping
+            log.exception("could not mark run %s as failed", run_id)
 
     # ------------------------------------------------------------------ #
     # Approvals

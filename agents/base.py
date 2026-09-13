@@ -131,6 +131,12 @@ class AgentContext:
 # =========================================================================== #
 # Base agent
 # =========================================================================== #
+#: Upper bound for a retry that widens the output ceiling. Free models advertise
+#: large contexts but are slow, and an unbounded retry turns one bad reply into
+#: a multi-minute stall.
+_MAX_OUTPUT_TOKENS = 12000
+
+
 class BaseAgent(abc.ABC):
     """One responsibility, one agent."""
 
@@ -164,8 +170,15 @@ class BaseAgent(abc.ABC):
         capability: Capability | None = None,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        cacheable_prefix_chars: int = 0,
+        retry: int = 0,
     ) -> LLMResponse:
-        """Single LLM turn, routed by capability and charged to the run budget."""
+        """Single LLM turn, routed by tier and charged to the run budget.
+
+        ``cacheable_prefix_chars`` marks how much of the system prompt is stable
+        across runs (standards, conventions, the application map). Providers that
+        support prompt caching then bill that prefix once instead of every call.
+        """
         messages: Sequence[ChatMessage] = [ChatMessage.system(system), ChatMessage.user(user)]
         return await ctx.router.complete(
             messages,
@@ -177,6 +190,8 @@ class BaseAgent(abc.ABC):
             temperature=temperature,
             budget=ctx.budget,
             run_id=ctx.run_id,
+            cacheable_prefix_chars=cacheable_prefix_chars,
+            retry=retry,
         )
 
     async def ask_json(
@@ -190,31 +205,73 @@ class BaseAgent(abc.ABC):
         capability: Capability | None = None,
         max_tokens: int | None = None,
         retries: int = 1,
+        cacheable_prefix_chars: int = 0,
     ) -> Any:
         """Ask for JSON and *guarantee* a usable Python object.
 
         Models drift from schemas. Rather than fail a whole QA run on a stray
-        comma, we retry once with an explicit repair instruction and then fall
-        back to ``fallback`` so downstream agents always have something valid.
+        comma, we retry with an explicit repair instruction and then fall back to
+        ``fallback`` so downstream agents always have something valid.
+
+        The two ways this fails are not the same, and a live run against free
+        models made that obvious:
+
+        * **Malformed.** The model wrote prose around the JSON, or fenced it.
+          Telling it to stop works.
+        * **Truncated.** The reply hit the output ceiling mid-structure. Telling
+          it to write valid JSON is useless — it will write the same long answer
+          and be cut off in the same place. What it needs is more room, so the
+          ceiling is raised for the retry and the model is asked to be terser.
+
+        Conflating the two is how a run ends up silently falling back to the
+        deterministic scaffold while looking like it succeeded.
         """
         attempt_system = system
+        attempt_tokens = max_tokens
         last_text = ""
         for attempt in range(retries + 1):
             response = await self.ask(
                 ctx, attempt_system, user, task=task, json_mode=True,
-                capability=capability, max_tokens=max_tokens,
+                capability=capability, max_tokens=attempt_tokens,
+                # Only the first attempt can hit the cache; a repair attempt
+                # appends to the system prompt and changes the prefix.
+                cacheable_prefix_chars=cacheable_prefix_chars if attempt == 0 else 0,
+                retry=attempt,
             )
             last_text = response.text
             parsed = response.json()
             if parsed is not None:
+                if response.finish_reason == "length":
+                    # Parsed despite being cut off: real but incomplete content,
+                    # so say so rather than pretending the plan is whole.
+                    ctx.warn(
+                        f"{self.name.value}: the model's reply hit the output limit and may be "
+                        f"incomplete (task {task})"
+                    )
                 return parsed
+
             if attempt < retries:
-                attempt_system = (
-                    system
-                    + "\n\nCRITICAL: your previous reply was not valid JSON. "
-                    "Reply with a single JSON object and nothing else — no prose, no code fences."
-                )
-                ctx.warn(f"{self.name.value}: model returned non-JSON, retrying once")
+                truncated = response.finish_reason == "length"
+                if truncated:
+                    ceiling = attempt_tokens or ctx.router.default_max_tokens
+                    attempt_tokens = min(int(ceiling * 1.75), _MAX_OUTPUT_TOKENS)
+                    attempt_system = (
+                        system
+                        + "\n\nYour previous reply was cut off before it finished. Reply again, "
+                        "more concisely: fewer items, shorter strings, no repetition. It must be "
+                        "a single complete JSON object."
+                    )
+                    ctx.warn(
+                        f"{self.name.value}: reply truncated at the output limit; "
+                        f"retrying with room for {attempt_tokens:,} tokens"
+                    )
+                else:
+                    attempt_system = (
+                        system
+                        + "\n\nCRITICAL: your previous reply was not valid JSON. "
+                        "Reply with a single JSON object and nothing else — no prose, no code fences."
+                    )
+                    ctx.warn(f"{self.name.value}: model returned non-JSON, retrying once")
         ctx.warn(
             f"{self.name.value}: could not obtain valid JSON after {retries + 1} attempt(s); "
             f"using deterministic fallback"

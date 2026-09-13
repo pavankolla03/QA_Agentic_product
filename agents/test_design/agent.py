@@ -10,9 +10,11 @@ the plan is accepted.
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import TYPE_CHECKING, Any
 
 from agents.base import AgentContext, BaseAgent
+from configs.settings import load_model_config
 from packages.aiqa_types.enums import (
     AgentName,
     ApprovalKind,
@@ -22,6 +24,9 @@ from packages.aiqa_types.enums import (
     TestLayer,
 )
 from packages.aiqa_types.models import FeatureSpec, GherkinStep, Scenario, TestPlan
+
+if TYPE_CHECKING:  # imported lazily at runtime to keep the knowledge service optional
+    from services.knowledge_service.test_knowledge import TestKnowledge
 
 SYSTEM = """You are a principal QA automation architect designing an executable BDD test suite.
 
@@ -35,19 +40,26 @@ No locators, URLs or technical selectors in step text.
 step-definition reuse actually happens.
 - Each scenario maps to at least one acceptance criterion id.
 - Tag everything: @smoke for the critical path, @regression otherwise, plus @P1/@P2/@P3 and @negative.
-- Prefer API or DB verification over UI assertions for data-level checks.
+- Prefer API or DB verification over UI assertions for data-level checks. These become real
+  test files, so an api_check may only use a `path` from the observed endpoint list below;
+  one that was never observed is discarded.
 
-Reply with ONE JSON object:
+Reply with ONE JSON object. Write a step as a single string beginning with its keyword.
+Do NOT emit test ids, tags, file names or a data_driven flag - those are derived, and
+inventing them only costs you output:
 {"title": str, "strategy": str,
- "features": [{"name": str, "file_name": str, "description": str, "tags": [str],
-   "background": [{"keyword": str, "text": str}],
-   "scenarios": [{"test_id": str, "name": str, "tags": [str], "priority": "P0|P1|P2|P3",
-     "layer": "ui|api|database", "negative": bool, "data_driven": bool,
-     "covers_criteria": [str],
-     "steps": [{"keyword": "Given|When|Then|And|But", "text": str}],
+ "features": [{"name": str, "desc": str,
+   "background": ["Given ...", "And ..."],
+   "scenarios": [{"name": str, "p": "P0|P1|P2|P3", "layer": "ui|api|db", "neg": bool,
+     "criteria": [str],
+     "steps": ["Given ...", "When ...", "Then ..."],
      "examples": [{"column": "value"}]}]}],
- "page_objects_needed": [str], "page_objects_reused": [str], "fixtures_reused": [str],
- "api_checks": [str], "db_checks": [str], "risks": [str], "coverage_notes": str}"""
+ "new_pages": [str], "reuse_pages": [str], "reuse_fixtures": [str],
+ "api_checks": [{"name": str, "method": "GET|POST|PUT|PATCH|DELETE", "path": str,
+                 "expect_status": int, "asserts": [str], "criteria": [str], "negative": bool}],
+ "db_checks": [{"name": str, "table": str, "where": str, "expect_rows": int,
+                "columns": [str], "criteria": [str]}],
+ "risks": [str], "notes": str}"""
 
 
 class TestDesignAgent(BaseAgent):
@@ -67,17 +79,32 @@ class TestDesignAgent(BaseAgent):
         # Ask what we already have before paying a reasoning model to invent it.
         reuse = self._discover_reuse(ctx)
 
-        # ---- 1. one batched design call for every scenario -------------- #
-        # Designing six scenarios in six calls costs six times as much and
-        # produces a less coherent suite, because no call sees the others.
-        user = self._build_prompt(ctx, reuse)
-        raw = await self.ask_json(
-            ctx, SYSTEM, user,
-            task="test_design.plan",
-            fallback=_fallback_plan(ctx),
-            max_tokens=6000,
-        )
-        plan = _to_plan(raw, ctx)
+        # ---- 1. can memory answer this outright? ------------------------ #
+        # The cheapest call is the one never made. If every testable criterion
+        # is already expressed by a remembered scenario, the design is a lookup.
+        plan = self._plan_from_memory(ctx)
+        if plan is None:
+            # ---- one batched design call for every scenario -------------- #
+            # Designing six scenarios in six calls costs six times as much and
+            # produces a less coherent suite, because no call sees the others.
+            user = self._build_prompt(ctx, reuse)
+            # The house standards are instructions, not per-request data, and
+            # they are byte-identical between runs. Putting them in the system
+            # prompt turns them into a cacheable prefix instead of context that
+            # is re-billed on every call.
+            prefix = ctx.metadata.get("standards_prefix", "")
+            system = SYSTEM + (f"\n\n{prefix}" if prefix else "")
+            raw = await self.ask_json(
+                ctx, system, user,
+                task="test_design.plan",
+                fallback=_fallback_plan(ctx),
+                # A 12-scenario plan does not fit in 6k, and a plan cut off
+                # mid-scenario is discarded entirely — the expensive call is
+                # wasted. Room is cheaper than a retry.
+                max_tokens=9000,
+                cacheable_prefix_chars=len(system),
+            )
+            plan = _to_plan(raw, ctx)
 
         # ---- 2. drop scenarios the suite already covers ----------------- #
         self._drop_duplicates(ctx, plan)
@@ -176,6 +203,77 @@ class TestDesignAgent(BaseAgent):
             )
         return reuse
 
+    def _plan_from_memory(self, ctx: AgentContext) -> TestPlan | None:
+        """Rebuild the plan from remembered tests, or return None to design it.
+
+        Returns a plan only when *every* testable acceptance criterion is
+        matched by a stored scenario above the configured similarity. Partial
+        cover is not enough: the uncovered criteria are exactly the ones that
+        need designing, and a plan that quietly omits them looks complete.
+        """
+        from services.knowledge_service.test_knowledge import similarity
+
+        policy = (load_model_config().get("reuse") or {})
+        if not policy.get("skip_design", True):
+            return None
+
+        store = ctx.test_knowledge
+        requirement = ctx.requirement
+        if store is None or requirement is None:
+            return None
+
+        remembered = store.all()
+        if len(remembered) < int(policy.get("min_remembered_scenarios", 3) or 3):
+            return None
+
+        criteria = [c for c in requirement.acceptance_criteria if c.testable]
+        if not criteria:
+            return None
+
+        threshold = float(policy.get("skip_design_similarity", 0.80) or 0.80)
+        required = float(policy.get("skip_design_coverage", 1.0) or 1.0)
+
+        # Exact traceability where we have it: a scenario recorded which
+        # criteria it verifies, so no threshold is involved. Similarity against
+        # the scenario *name* is the fallback for tests remembered before that
+        # was stored — never against the full signature, which is padded with
+        # tags and step text and so scores low for any short criterion.
+        by_criterion: dict[str, list[TestKnowledge]] = {}
+        for item in remembered:
+            for text in item.covers_criteria:
+                by_criterion.setdefault(_normalise_criterion(text), []).append(item)
+
+        matched: dict[str, TestKnowledge] = {}
+        covered = 0
+        for criterion in criteria:
+            traced = by_criterion.get(_normalise_criterion(criterion.text)) or []
+            if traced:
+                covered += 1
+                for item in traced:
+                    matched[item.test_id] = item
+                continue
+            best = max(
+                ((similarity(criterion.text, item.name), item) for item in remembered),
+                key=lambda pair: pair[0],
+                default=(0.0, None),
+            )
+            if best[1] is not None and best[0] >= threshold:
+                covered += 1
+                matched[best[1].test_id] = best[1]
+        if not matched or covered / len(criteria) < required:
+            return None
+
+        plan = _plan_from_knowledge(list(matched.values()), ctx)
+        if plan is None:
+            return None
+
+        ctx.note(
+            f"design skipped: all {len(criteria)} testable criteria are already covered by "
+            f"{len(matched)} remembered scenario(s) at >= {threshold:.0%} similarity"
+        )
+        ctx.metadata["design_reused"] = True
+        return plan
+
     def _drop_duplicates(self, ctx: AgentContext, plan: TestPlan) -> None:
         """Remove designed scenarios that the suite already covers.
 
@@ -220,6 +318,24 @@ class TestDesignAgent(BaseAgent):
                 for criterion in requirement.acceptance_criteria
             ],
         ]
+        # The endpoint list is short and closes the set of API checks the model
+        # may plan. Without it, every api_check it writes is a guess that the
+        # code generator then throws away — paying for output twice over.
+        endpoints = (
+            ctx.application_map.api_catalog(limit=25) if ctx.application_map is not None else []
+        )
+        if endpoints:
+            sections += [
+                "",
+                "## Observed API endpoints (an api_check may use ONLY these paths)",
+                *[
+                    f"  {e['method']} {e['path']}"
+                    + (f"  fields: {', '.join(e.get('required_fields') or e.get('fields') or [])}"
+                       if e.get("fields") or e.get("required_fields") else "")
+                    for e in endpoints
+                ],
+            ]
+
         if requirement.business_rules:
             sections += ["Business rules:", *[f"  - {rule}" for rule in requirement.business_rules]]
         if requirement.data_requirements:
@@ -234,6 +350,9 @@ class TestDesignAgent(BaseAgent):
             f"Feature file naming: {naming.get('feature_file', 'kebab-case.feature')}",
             f"Every scenario must be tagged: {naming.get('scenario_must_have_tag', True)}",
             f"Max steps per scenario: {_max_steps(standards)}",
+            f"Design AT MOST {_max_scenarios(standards)} scenarios for this feature. "
+            "Spend them on distinct risks, not variations of the same one — a boundary set "
+            "belongs in one Scenario Outline, not five scenarios.",
             f"Target directories: features={layout.get('features_dir', 'tests/features')}, "
             f"steps={layout.get('steps_dir', 'tests/steps')}, pages={layout.get('pages_dir', 'tests/pages')}",
         ]
@@ -306,7 +425,7 @@ class TestDesignAgent(BaseAgent):
                 "",
                 "## Assets available for reuse - prefer these over anything new",
                 *[
-                    f"  {key.replace('_', ' ')}: {', '.join(values[:12])}"
+                    f"  {key.replace('_', ' ')}: {', '.join(str(v) for v in values[:12])}"
                     for key, values in assets.items()
                     if values
                 ],
@@ -330,11 +449,71 @@ class TestDesignAgent(BaseAgent):
 # =========================================================================== #
 # Conversion + deterministic quality gates
 # =========================================================================== #
+def _max_scenarios(standards: dict[str, Any]) -> int:
+    naming = (standards.get("naming", {}) or {})
+    try:
+        return max(1, int(naming.get("max_scenarios_per_feature", 10)))
+    except (TypeError, ValueError):
+        return 10
+
+
 def _max_steps(standards: dict[str, Any]) -> int:
     for rule in standards.get("rules", []) or []:
         if isinstance(rule, dict) and rule.get("check") == "max_scenario_steps":
             return int(rule.get("max_steps", 15))
     return 15
+
+
+#: Compact key -> the original key it replaces. The compact contract is what
+#: the model is asked for; the original is still accepted so that stored plans,
+#: fixtures and any provider that echoes the older schema keep working.
+_ALIASES = {
+    "desc": "description",
+    "p": "priority",
+    "neg": "negative",
+    "criteria": "covers_criteria",
+    "new_pages": "page_objects_needed",
+    "reuse_pages": "page_objects_reused",
+    "reuse_fixtures": "fixtures_reused",
+    "notes": "coverage_notes",
+}
+
+_STEP_KEYWORDS = ("Given", "When", "Then", "And", "But")
+
+
+def _pick(data: dict[str, Any], key: str) -> Any:
+    """Read a field by its canonical name, falling back to the compact one."""
+    if key in data:
+        return data[key]
+    for short, canonical in _ALIASES.items():
+        if canonical == key and short in data:
+            return data[short]
+    return None
+
+
+def _steps(raw_steps: Any) -> list[GherkinStep]:
+    """Parse steps written either as objects or as single strings.
+
+    `"Given I am signed in"` costs roughly seven fewer tokens than
+    `{"keyword": "Given", "text": "I am signed in"}`, and across a suite that is
+    the largest single saving available in the design call. Both are accepted.
+    """
+    steps: list[GherkinStep] = []
+    for step in raw_steps or []:
+        if isinstance(step, dict):
+            text = str(step.get("text", "")).strip()
+            keyword = _keyword(step.get("keyword"))
+        elif isinstance(step, str):
+            head, _, tail = step.strip().partition(" ")
+            if head.capitalize() in _STEP_KEYWORDS and tail.strip():
+                keyword, text = head.capitalize(), tail.strip()
+            else:
+                keyword, text = "Given", step.strip()
+        else:
+            continue
+        if text:
+            steps.append(GherkinStep(keyword=keyword, text=text))
+    return steps
 
 
 def _to_plan(raw: Any, ctx: AgentContext) -> TestPlan:
@@ -348,11 +527,7 @@ def _to_plan(raw: Any, ctx: AgentContext) -> TestPlan:
         for raw_scenario in raw_feature.get("scenarios", []) or []:
             if not isinstance(raw_scenario, dict) or not raw_scenario.get("name"):
                 continue
-            steps = [
-                GherkinStep(keyword=_keyword(step.get("keyword")), text=str(step.get("text", "")).strip())
-                for step in raw_scenario.get("steps", []) or []
-                if isinstance(step, dict) and str(step.get("text", "")).strip()
-            ]
+            steps = _steps(raw_scenario.get("steps"))
             examples = [
                 {str(k): str(v) for k, v in row.items()}
                 for row in raw_scenario.get("examples", []) or []
@@ -365,24 +540,22 @@ def _to_plan(raw: Any, ctx: AgentContext) -> TestPlan:
                     tags=[_tag(t) for t in raw_scenario.get("tags", []) or [] if str(t).strip()],
                     steps=steps,
                     examples=examples,
-                    priority=_priority(raw_scenario.get("priority")),
+                    priority=_priority(_pick(raw_scenario, "priority")),
                     layer=_layer(raw_scenario.get("layer")),
-                    negative=bool(raw_scenario.get("negative", False)),
+                    negative=bool(_pick(raw_scenario, "negative") or False),
+                    # Derived, not asked for: a scenario with an Examples table
+                    # is data-driven by definition.
                     data_driven=bool(examples) or bool(raw_scenario.get("data_driven", False)),
-                    covers_criteria=[str(c) for c in raw_scenario.get("covers_criteria", []) or []],
+                    covers_criteria=[str(c) for c in _pick(raw_scenario, "covers_criteria") or []],
                 )
             )
         features.append(
             FeatureSpec(
                 name=str(raw_feature["name"]).strip()[:200],
                 file_name=str(raw_feature.get("file_name", "")).strip() or _feature_file_name(raw_feature["name"], ctx),
-                description=str(raw_feature.get("description", "")).strip(),
+                description=str(_pick(raw_feature, "description") or "").strip(),
                 tags=[_tag(t) for t in raw_feature.get("tags", []) or [] if str(t).strip()],
-                background=[
-                    GherkinStep(keyword=_keyword(step.get("keyword")), text=str(step.get("text", "")).strip())
-                    for step in raw_feature.get("background", []) or []
-                    if isinstance(step, dict) and str(step.get("text", "")).strip()
-                ],
+                background=_steps(raw_feature.get("background")),
                 scenarios=scenarios,
             )
         )
@@ -391,7 +564,7 @@ def _to_plan(raw: Any, ctx: AgentContext) -> TestPlan:
         features = _to_plan(_fallback_plan(ctx), ctx).features
 
     def strings(key: str) -> list[str]:
-        value = data.get(key) or []
+        value = _pick(data, key) or []
         return [str(v).strip() for v in value if str(v).strip()] if isinstance(value, list) else []
 
     plan = TestPlan(
@@ -403,10 +576,12 @@ def _to_plan(raw: Any, ctx: AgentContext) -> TestPlan:
         page_objects_needed=strings("page_objects_needed"),
         page_objects_reused=strings("page_objects_reused"),
         fixtures_reused=strings("fixtures_reused"),
-        api_checks=strings("api_checks"),
-        db_checks=strings("db_checks"),
+        # Structured objects now, but a plain string is still accepted and parsed
+        # by the renderer, so plans stored before this change keep working.
+        api_checks=_checks(data.get("api_checks")),
+        db_checks=_checks(data.get("db_checks")),
         risks=strings("risks"),
-        coverage_notes=str(data.get("coverage_notes", "")).strip(),
+        coverage_notes=str(_pick(data, "coverage_notes") or "").strip(),
     )
 
     # Cross-check reuse claims against what the repository actually contains.
@@ -484,17 +659,107 @@ def _normalise_ids(plan: TestPlan, ctx: AgentContext) -> None:
             scenario.test_id = candidate
 
 
+def _checks(raw: Any) -> list[Any]:
+    """Keep planned checks as they came: dicts stay dicts, prose stays prose."""
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict) or (isinstance(item, str) and item.strip())][:20]
+
+
+def _normalise_criterion(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+
+def _plan_from_knowledge(items: list[TestKnowledge], ctx: AgentContext) -> TestPlan | None:
+    """Turn remembered scenarios back into a plan.
+
+    Everything needed is already stored per scenario: the step text, the feature
+    it belonged to, its tags and the page objects it drove. Reconstruction is
+    exact for the parts that matter and empty for the parts that do not
+    (strategy prose, risks) rather than invented.
+    """
+    usable = [item for item in items if item.steps and item.name]
+    if not usable:
+        return None
+
+    by_feature: dict[str, list[TestKnowledge]] = {}
+    for item in usable:
+        by_feature.setdefault(item.feature or (ctx.requirement.title if ctx.requirement else "Feature"), []).append(item)
+
+    features: list[FeatureSpec] = []
+    pages: list[str] = []
+    for name, remembered in by_feature.items():
+        scenarios = [
+            Scenario(
+                test_id=item.test_id,
+                name=item.name,
+                tags=list(item.tags),
+                steps=_steps(item.steps),
+                priority=_priority(next((t[1:] for t in item.tags if t.startswith("@P")), None)),
+                negative="@negative" in item.tags,
+                data_driven="@data-driven" in item.tags,
+                covers_criteria=list(item.covers_criteria),
+            )
+            for item in remembered
+        ]
+        features.append(
+            FeatureSpec(
+                name=name,
+                file_name=_feature_file_name(name, ctx),
+                description="",
+                tags=[],
+                background=[],
+                scenarios=scenarios,
+            )
+        )
+        for item in remembered:
+            pages.extend(p for p in item.page_objects if p not in pages)
+
+    return TestPlan(
+        run_id=ctx.run_id,
+        requirement_id=ctx.requirement.id if ctx.requirement else "",
+        title=f"Test plan (reused) - {ctx.requirement.title if ctx.requirement else 'feature'}",
+        strategy=(
+            "Reused from the Test Knowledge Store: every testable acceptance criterion is already "
+            "covered by an existing scenario, so no new design was generated."
+        ),
+        features=features,
+        page_objects_needed=[],
+        page_objects_reused=pages,
+        fixtures_reused=sorted({f for item in usable for f in item.fixtures}),
+        coverage_notes="Plan rebuilt from remembered tests; no design call was made.",
+    )
+
+
+#: Priority order for choosing a feature's critical path.
+_PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+
 def _ensure_tags(plan: TestPlan) -> None:
-    """Every scenario carries at least a suite tag and a priority tag."""
+    """Derive every scenario's tags.
+
+    Tags are a pure function of the scenario's own attributes, so the design
+    call is not asked for them: the critical path is the highest-priority
+    positive scenario in a feature, everything else is regression, and
+    @negative / @data-driven follow the flags.
+    """
     for feature in plan.features:
+        positives = [s for s in feature.scenarios if not s.negative]
+        critical = min(
+            positives,
+            key=lambda s: _PRIORITY_RANK.get(s.priority.value, 9),
+            default=None,
+        )
         for scenario in feature.scenarios:
             tags = set(scenario.tags)
             if not any(t in ("@smoke", "@regression", "@sanity") for t in tags):
-                tags.add("@regression")
+                tags.add("@smoke" if scenario is critical else "@regression")
             if not any(t.startswith("@P") for t in tags):
                 tags.add(f"@{scenario.priority.value}")
             if scenario.negative:
                 tags.add("@negative")
+            if scenario.data_driven:
+                tags.add("@data-driven")
             scenario.tags = sorted(tags)
 
 

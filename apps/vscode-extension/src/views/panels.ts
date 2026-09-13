@@ -138,19 +138,73 @@ export class HealingProvider extends BaseProvider {
   protected async load(): Promise<vscode.TreeItem[]> {
     const metrics = await this.api.metrics(30);
     const healing = (metrics.self_healing ?? {}) as Record<string, any>;
-    if (!healing.proposed) {
-      return [note('No repairs proposed yet', 'wrench')];
+    const items: vscode.TreeItem[] = healing.proposed
+      ? [
+          metric('Proposed', healing.proposed ?? 0, 'lightbulb'),
+          metric('Applied', healing.applied ?? 0, 'check'),
+          metric('Verified', healing.verified ?? 0, 'pass-filled', 'Re-ran and passed'),
+          metric('Reverted', healing.reverted ?? 0, 'discard', 'Did not fix the failure; rolled back'),
+          metric('Success rate', `${healing.success_rate_pct ?? 0}%`, 'graph'),
+          ...Object.entries((healing.by_strategy ?? {}) as Record<string, number>).map(([strategy, count]) =>
+            metric(strategy.replace(/_/g, ' '), count, 'circle-small'),
+          ),
+        ]
+      : [note('No repairs proposed yet', 'wrench')];
+
+    items.push(...(await this.health()));
+    return items;
+  }
+
+  /**
+   * How trustworthy the suite is.
+   *
+   * A consistently failing test is shown as `broken`, never as a quarantine
+   * candidate: it is reporting something, and hiding it is how a defect ships
+   * behind a green pipeline.
+   */
+  private async health(): Promise<vscode.TreeItem[]> {
+    const id = projectId();
+    if (!id) {
+      return [];
     }
-    return [
-      metric('Proposed', healing.proposed ?? 0, 'lightbulb'),
-      metric('Applied', healing.applied ?? 0, 'check'),
-      metric('Verified', healing.verified ?? 0, 'pass-filled', 'Re-ran and passed'),
-      metric('Reverted', healing.reverted ?? 0, 'discard', 'Did not fix the failure; rolled back'),
-      metric('Success rate', `${healing.success_rate_pct ?? 0}%`, 'graph'),
-      ...Object.entries((healing.by_strategy ?? {}) as Record<string, number>).map(([strategy, count]) =>
-        metric(strategy.replace(/_/g, ' '), count, 'circle-small'),
-      ),
+    let report: Record<string, any>;
+    try {
+      report = await this.api.suiteHealth(id);
+    } catch {
+      return [];
+    }
+    if (!report.tests_tracked) {
+      return [];
+    }
+
+    const byVerdict = (report.by_verdict ?? {}) as Record<string, number>;
+    const items: vscode.TreeItem[] = [
+      metric('Suite health', `${report.health_score ?? 0}%`, 'pulse', report.summary ?? ''),
     ];
+    if (byVerdict.broken) {
+      items.push(
+        metric(
+          'Never passing',
+          byVerdict.broken,
+          'error',
+          'These are reporting something. They are never quarantined automatically.',
+        ),
+      );
+    }
+    const candidates = (report.quarantine_candidates ?? []) as Record<string, any>[];
+    if (candidates.length) {
+      const item = new vscode.TreeItem(
+        `${candidates.length} quarantine candidate${candidates.length === 1 ? '' : 's'}`,
+        vscode.TreeItemCollapsibleState.None,
+      );
+      item.iconPath = new vscode.ThemeIcon('warning');
+      item.description = 'intermittent';
+      item.tooltip = candidates.map((c) => `${c.test_name || c.test_id}: ${c.reason}`).join('\n');
+      item.command = { command: 'aiqa.showSuiteHealth', title: 'Review suite health' };
+      items.push(item);
+    }
+    items.push(action('Show suite health', 'aiqa.showSuiteHealth', 'checklist'));
+    return items;
   }
 }
 
@@ -249,7 +303,63 @@ export class KnowledgeProvider extends BaseProvider {
       item.tooltip = routes.join('\n');
       items.push(item);
     }
+    items.push(...(await this.coverage(id)));
     items.push(action('Show full knowledge report', 'aiqa.showKnowledge', 'output'));
+    return items;
+  }
+
+  /**
+   * Untested surface, as actionable rows.
+   *
+   * Each gap carries the instruction that would close it, so clicking one
+   * starts that run rather than leaving the engineer to translate a percentage
+   * into a plan.
+   */
+  private async coverage(id: string): Promise<vscode.TreeItem[]> {
+    let report: Record<string, any>;
+    try {
+      report = await this.api.projectCoverage(id);
+    } catch {
+      // Coverage is a nice-to-have on this panel; a control plane that does not
+      // serve it yet must not blank out everything above.
+      return [];
+    }
+    const gaps = (report.gaps ?? []) as Record<string, any>[];
+    const routes = (report.routes ?? {}) as Record<string, any>;
+    const items: vscode.TreeItem[] = [
+      metric(
+        'Routes with a test',
+        `${routes.covered ?? 0} of ${routes.total ?? 0}`,
+        'checklist',
+        'A route with a test touching it — not a claim that it is well tested.',
+      ),
+    ];
+    if (!gaps.length) {
+      return items;
+    }
+
+    const high = gaps.filter((g) => g.severity === 'high').length;
+    const header = new vscode.TreeItem(
+      `${gaps.length} coverage gap${gaps.length === 1 ? '' : 's'}`,
+      vscode.TreeItemCollapsibleState.None,
+    );
+    header.description = high ? `${high} high severity` : '';
+    header.iconPath = new vscode.ThemeIcon(high ? 'warning' : 'info');
+    header.tooltip = report.summary ?? '';
+    items.push(header);
+
+    for (const gap of gaps.slice(0, 6)) {
+      const item = new vscode.TreeItem(String(gap.label ?? gap.key), vscode.TreeItemCollapsibleState.None);
+      item.description = `${gap.severity} · ${gap.kind}`;
+      item.iconPath = new vscode.ThemeIcon(gap.severity === 'high' ? 'error' : 'circle-outline');
+      item.tooltip = `${gap.reason}\n\nClick to run: ${gap.suggested_instruction}`;
+      item.command = {
+        command: 'aiqa.automateInstruction',
+        title: 'Close this gap',
+        arguments: [gap.suggested_instruction],
+      };
+      items.push(item);
+    }
     return items;
   }
 }

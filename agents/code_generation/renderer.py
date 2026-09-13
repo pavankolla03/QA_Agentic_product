@@ -1,0 +1,854 @@
+"""Deterministic TypeScript rendering.
+
+The expensive way to generate a Page Object is to ask a model to write the whole
+file: imports, class declaration, locator getters, method bodies, formatting.
+Most of that is mechanical given the repository's conventions and a verified
+locator catalogue — and paying a coding model to retype it is the single largest
+line item in a run.
+
+So the model produces a **plan** (which methods, which locators, what each one
+means) and this module renders the code. Three things improve at once:
+
+* **Cost.** The prompt carries no boilerplate and the completion is compact JSON
+  rather than a file.
+* **Correctness.** Locators come from the catalogue by construction, so a
+  hallucinated selector is impossible rather than merely detected.
+* **Consistency.** House style — base class, import order, getter visibility,
+  async signatures — is applied by code, so it cannot drift between files.
+
+Everything here is pure: plan in, source out. That makes it trivially testable
+and means a model outage degrades to a deterministic scaffold rather than a
+failure.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+
+# --------------------------------------------------------------------------- #
+# The plan
+# --------------------------------------------------------------------------- #
+@dataclass
+class MethodPlan:
+    """One method on a Page Object."""
+
+    name: str
+    kind: str = "action"                    # action | assertion | navigation
+    params: list[str] = field(default_factory=list)
+    locators: list[str] = field(default_factory=list)   # catalogue entries, in order of use
+    intent: str = ""
+    expect: str = ""                        # assertion matcher, e.g. toBeVisible / toContainText
+
+    @property
+    def signature(self) -> str:
+        args = ", ".join(f"{p}: string" for p in self.params)
+        return f"async {self.name}({args}): Promise<void>"
+
+
+@dataclass
+class PagePlan:
+    """One Page Object."""
+
+    class_name: str
+    route: str = "/"
+    base_class: str = ""
+    locators: dict[str, str] = field(default_factory=dict)   # property -> locator expression
+    methods: list[MethodPlan] = field(default_factory=list)
+    description: str = ""
+    #: property -> ARIA role, so the renderer can choose `fill` / `selectOption`
+    #: / `check` instead of assuming every field is a text input.
+    roles: dict[str, str] = field(default_factory=dict)
+    #: "model" when the plan named this route explicitly, "default" when it was
+    #: filled in. A defaulted route is re-derived from the catalogue, because a
+    #: default that happens to be a real route is otherwise indistinguishable
+    #: from a deliberate choice.
+    route_source: str = "default"
+
+
+@dataclass
+class StepPlan:
+    """One BDD step, bound to a Page Object method."""
+
+    text: str
+    keyword: str = "Given"
+    page: str = ""
+    call: str = ""                          # e.g. fillForm(name, email)
+    params: list[str] = field(default_factory=list)
+    setup: bool = False                     # instantiate + navigate before calling
+
+
+@dataclass
+class GenerationPlan:
+    pages: list[PagePlan] = field(default_factory=list)
+    steps: list[StepPlan] = field(default_factory=list)
+    reused_pages: list[str] = field(default_factory=list)
+    reused_steps: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Naming helpers
+# --------------------------------------------------------------------------- #
+def camel(text: str) -> str:
+    parts = [p for p in re.split(r"[^A-Za-z0-9]+", str(text)) if p]
+    if not parts:
+        return "value"
+    head = parts[0]
+    return head[0].lower() + head[1:] + "".join(p[:1].upper() + p[1:] for p in parts[1:])
+
+
+def pascal(text: str) -> str:
+    return "".join(p[:1].upper() + p[1:] for p in re.split(r"[^A-Za-z0-9]+", str(text)) if p) or "Page"
+
+
+def safe_identifier(text: str, fallback: str = "value") -> str:
+    ident = camel(text)
+    if not ident or not re.match(r"^[A-Za-z_$]", ident):
+        return fallback
+    if ident in _RESERVED:
+        return f"{ident}Value"
+    return ident
+
+
+_RESERVED = {
+    "class", "const", "let", "var", "function", "return", "new", "this", "await", "async",
+    "if", "else", "for", "while", "switch", "case", "default", "import", "export", "extends",
+    "super", "static", "public", "private", "protected", "type", "interface", "enum", "page",
+}
+
+
+# --------------------------------------------------------------------------- #
+# Page Object rendering
+# --------------------------------------------------------------------------- #
+def render_page_object(plan: PagePlan, *, unverified: set[str] | None = None) -> str:
+    """Render a Page Object in the repository's house style."""
+    unverified = unverified or set()
+    lines: list[str] = [
+        f"// {plan.class_name} - generated by AI QA Engineer.",
+    ]
+    if plan.description:
+        lines.append(f"// {plan.description}")
+
+    needs_expect = any(m.kind == "assertion" for m in plan.methods)
+    playwright_imports = ["expect"] if needs_expect else []
+    if not plan.base_class:
+        playwright_imports.insert(0, "Page")
+    if playwright_imports:
+        lines.append(f"import {{ {', '.join(playwright_imports)} }} from '@playwright/test';")
+    if plan.base_class:
+        lines.append(f"import {{ {plan.base_class} }} from './{plan.base_class}';")
+    lines.append("")
+
+    declaration = f"export class {plan.class_name}"
+    if plan.base_class:
+        declaration += f" extends {plan.base_class}"
+    lines.append(declaration + " {")
+    lines.append(f"  readonly path = '{plan.route}';")
+    lines.append("")
+
+    # A class without a base needs its own page handle.
+    if not plan.base_class:
+        lines.append("  constructor(private readonly page: Page) {}")
+        lines.append("")
+
+    # ---- locators: private getters, never inline in a method --------------- #
+    if plan.locators:
+        for prop, expression in plan.locators.items():
+            if expression in unverified:
+                lines.append(
+                    f"  // TODO(aiqa): '{_testid_of(expression) or expression}' was not observed "
+                    f"in the live DOM - verify before relying on this."
+                )
+            lines.append(f"  private get {prop}() {{")
+            lines.append(f"    return this.page.{expression};")
+            lines.append("  }")
+            lines.append("")
+    else:
+        lines.append("  // TODO(aiqa): no locators were verified against the live application.")
+        lines.append("  // Add them here once the environment is reachable.")
+        lines.append("")
+
+    # ---- methods ----------------------------------------------------------- #
+    for method in plan.methods:
+        if method.intent:
+            lines.append(f"  /** {method.intent} */")
+        lines.append(f"  {method.signature} {{")
+        body = _render_method_body(method, plan)
+        lines.extend(f"    {line}" if line else "" for line in body)
+        lines.append("  }")
+        lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines.append("}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_method_body(method: MethodPlan, plan: PagePlan) -> list[str]:
+    """Turn a method plan into statements, using only planned locators."""
+    body: list[str] = []
+    known = set(plan.locators)
+
+    if method.kind == "navigation":
+        return ["await this.goto();"] if plan.base_class else [
+            "await this.page.goto(this.path);",
+        ]
+
+    if method.kind == "assertion":
+        matcher = method.expect or "toBeVisible"
+        target = method.locators[0] if method.locators else ""
+        argument = method.params[0] if method.params else ""
+        if target and target in known:
+            if matcher in ("toContainText", "toHaveText", "toHaveValue") and argument:
+                body.append(f"await expect(this.{target}).{matcher}({argument});")
+            else:
+                body.append(f"await expect(this.{target}).{matcher}();")
+        elif argument:
+            # No verified element for this assertion: assert on visible text
+            # rather than inventing a selector.
+            body.append(f"await expect(this.page.getByText({argument}, {{ exact: false }})).toBeVisible();")
+        else:
+            body.append("// TODO(aiqa): no verified element for this assertion.")
+        return body
+
+    # action
+    for index, locator_prop in enumerate(method.locators):
+        if locator_prop not in known:
+            continue
+        parameter = method.params[index] if index < len(method.params) else ""
+        body.append(_interaction(locator_prop, plan.roles.get(locator_prop, ""), parameter))
+
+    if not body:
+        body.append("// TODO(aiqa): map this action onto a verified locator.")
+    return body
+
+
+def _interaction(prop: str, role: str, parameter: str) -> str:
+    """The statement that drives one element.
+
+    A `<select>` does not respond to `fill()` and a checkbox does not take a
+    string, so the role decides the call. Without this every field is typed
+    into, and the test fails at runtime on the first dropdown.
+    """
+    if not parameter:
+        return f"await this.{prop}.click();"
+    if role == "combobox":
+        return f"await this.{prop}.selectOption({parameter});"
+    if role in ("checkbox", "radio"):
+        return f"await this.{prop}.setChecked({parameter} === 'true');"
+    return f"await this.{prop}.fill({parameter});"
+
+
+def _testid_of(expression: str) -> str:
+    match = re.search(r"getByTestId\(\s*['\"]([^'\"]+)['\"]\s*\)", expression or "")
+    return match.group(1) if match else ""
+
+
+# --------------------------------------------------------------------------- #
+# Step definition rendering
+# --------------------------------------------------------------------------- #
+_QUOTED_RE = re.compile(r"['\"]([^'\"]+)['\"]")
+#: Cucumber expression placeholders: {string}, {int}, {float}, {word}.
+_CUCUMBER_PARAM_RE = re.compile(r"\{(?:string|int|float|word)\}")
+_ANGLE_RE = re.compile(r"<([^>]+)>")
+
+
+def parameterise(text: str) -> tuple[str, list[str]]:
+    """Turn quoted values and `<placeholders>` into Cucumber parameters."""
+    params: list[str] = []
+
+    def replace_angle(match: re.Match[str]) -> str:
+        params.append(safe_identifier(match.group(1)))
+        return "{string}"
+
+    def replace_quoted(_match: re.Match[str]) -> str:
+        params.append(f"value{len(params) + 1}")
+        return "{string}"
+
+    # `"<value>"` is a single placeholder. Substituting angles first and then
+    # quotes would match the quotes still wrapping `{string}` and register a
+    # second, phantom parameter — the step signature would then declare more
+    # arguments than the pattern can ever supply.
+    text = re.sub(r"""['\"]<([^>]+)>['\"]""", r"<\1>", str(text))
+    pattern = _ANGLE_RE.sub(replace_angle, text)
+    pattern = _QUOTED_RE.sub(replace_quoted, pattern)
+    pattern = re.sub(r"^(Given|When|Then|And|But)\s+", "", pattern, flags=re.IGNORECASE).strip()
+
+    # A model often writes Cucumber expressions directly — "with dateOfBirth
+    # {string}" — instead of a quoted value, so no substitution happens and no
+    # parameter is recorded. Cucumber then passes an argument to a callback
+    # declared with none. The pattern is the contract, so the declared
+    # parameters are reconciled to it.
+    placeholders = len(_CUCUMBER_PARAM_RE.findall(pattern))
+    while len(params) < placeholders:
+        params.append(f"value{len(params) + 1}")
+    del params[placeholders:]
+
+    return pattern.replace("'", "\\'"), params
+
+
+def render_steps(
+    steps: list[StepPlan],
+    pages: list[str] | list[PagePlan],
+    *,
+    pages_import_path: str = "../pages",
+    bdd_import: str = "@cucumber/cucumber",
+) -> str:
+    """Render a step-definition file that calls Page Object methods only.
+
+    Takes the Page *Plans* where possible, not just their names, so a call can
+    be checked against the method's real signature. Binding from the planned
+    call string alone emitted `submitEmail()` for a method declared
+    `submitEmail(email: string)` — TypeScript that does not compile, in a step
+    that declared the argument and then never passed it.
+    """
+    signatures = _method_params(pages)
+    page_names = [p if isinstance(p, str) else p.class_name for p in pages]
+    used_pages = sorted({s.page for s in steps if s.page} | set(page_names))
+    lines: list[str] = [
+        "// Generated by AI QA Engineer - step definitions.",
+        "// Steps call Page Object methods; locators never appear here.",
+        f"import {{ Given, When, Then }} from '{bdd_import}';",
+    ]
+    for page in used_pages:
+        lines.append(f"import {{ {page} }} from '{pages_import_path}/{page}';")
+    lines.append("")
+    for page in used_pages:
+        lines.append(f"let {camel(page)}: {page};")
+    lines.append("")
+
+    for step in steps:
+        pattern, params = parameterise(step.text)
+        keyword = step.keyword if step.keyword in ("Given", "When", "Then") else "Given"
+        signature = ", ".join(f"{p}: string" for p in params)
+        lines.append(f"{keyword}('{pattern}', async function ({signature}) {{")
+
+        instance = camel(step.page) if step.page else ""
+        if step.setup and step.page:
+            lines.append(f"  {instance} = new {step.page}(this.page);")
+            lines.append(f"  await {instance}.goto();")
+        elif step.call and step.page:
+            # Cucumber runs steps in scenario order, not file order, and a
+            # scenario can start on a `When`. Without this the first step to use
+            # a page dereferences an undeclared variable at runtime — code that
+            # compiles and then dies on the first run.
+            lines.append(f"  {instance} ??= new {step.page}(this.page);")
+        if step.call and step.page:
+            call = _bind_call(step.call, params, signatures.get((step.page, _call_name(step.call))))
+            if call is None:
+                # The method needs a value this step does not supply. Emitting
+                # the call anyway would reference an undefined identifier, so
+                # the binding is left for a human, with the call spelled out.
+                required = signatures.get((step.page, _call_name(step.call)))
+                needed = ", ".join(required or _planned_args(step.call))
+                planned = step.call.strip().rstrip(";")
+                if "(" not in planned:
+                    planned = f"{planned}({', '.join(required or [])})"
+                lines.append(f"  // TODO(aiqa): supply {needed}, then call:")
+                lines.append(f"  // await {instance}.{planned};")
+            else:
+                lines.append(f"  await {instance}.{call};")
+        elif not step.setup:
+            lines.append("  // TODO(aiqa): bind this step to a Page Object method.")
+        lines.append("});")
+        lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def _method_params(pages: list[str] | list[PagePlan]) -> dict[tuple[str, str], list[str]]:
+    """(page class, method name) -> the parameters that method actually declares."""
+    out: dict[tuple[str, str], list[str]] = {}
+    for page in pages:
+        if isinstance(page, str):
+            continue
+        for method in page.methods:
+            out[(page.class_name, method.name)] = list(method.params)
+    return out
+
+
+def _call_name(call: str) -> str:
+    return call.strip().rstrip(";").partition("(")[0].strip()
+
+
+def _planned_args(call: str) -> list[str]:
+    inner = call.strip().rstrip(";").partition("(")[2].rsplit(")", 1)[0]
+    return [a.strip() for a in inner.split(",") if a.strip()]
+
+
+def _bind_call(call: str, params: list[str], declared: list[str] | None = None) -> str | None:
+    """Substitute the step's parameters into a call on a Page Object method.
+
+    ``declared`` is what the method's signature actually requires, and it wins
+    over whatever the plan wrote inside the parentheses. A plan that says
+    `submitEmail()` for a method declared `submitEmail(email: string)` would
+    otherwise render a call that does not compile.
+
+    Returns ``None`` when the method needs more values than the step provides:
+    the alternative is referencing an identifier that does not exist in the
+    step's scope, which is a broken test that looks correct.
+    """
+    call = call.strip().rstrip(";")
+    if "(" not in call:
+        call = f"{call}()"
+    name, _, rest = call.partition("(")
+    inner = rest.rsplit(")", 1)[0].strip()
+    planned = [a.strip() for a in inner.split(",") if a.strip()]
+
+    # The signature is the authority; the planned arguments are a hint.
+    required = declared if declared is not None else planned
+    if not required:
+        return f"{name}()"
+    if len(params) < len(required):
+        return None
+    return f"{name}({', '.join(params[:len(required)])})"
+
+
+# --------------------------------------------------------------------------- #
+# Plan construction from a model response (or deterministically)
+# --------------------------------------------------------------------------- #
+def plan_from_response(
+    raw: Any,
+    *,
+    catalog: list[dict[str, Any]],
+    base_class: str = "",
+    default_route: str = "/",
+) -> GenerationPlan:
+    """Validate a model plan against the verified locator catalogue.
+
+    Anything the model names that is not in the catalogue is dropped rather than
+    rendered — the renderer can only emit locators it was given, so invention is
+    structurally impossible rather than caught after the fact.
+    """
+    data = raw if isinstance(raw, dict) else {}
+    by_locator = {item["locator"]: item for item in catalog if item.get("locator")}
+    by_name = {
+        str(item.get("name", "")).strip().lower(): item for item in catalog if item.get("name")
+    }
+
+    plan = GenerationPlan(notes=[str(n) for n in (data.get("notes") or [])][:10])
+
+    for raw_page in data.get("pages", []) or []:
+        if not isinstance(raw_page, dict) or not raw_page.get("class"):
+            continue
+        page = PagePlan(
+            class_name=pascal(str(raw_page["class"])),
+            route=str(raw_page.get("route") or default_route),
+            base_class=base_class,
+            description=str(raw_page.get("description", ""))[:160],
+            route_source="model" if raw_page.get("route") else "default",
+        )
+
+        # Resolve every referenced element to a catalogue entry.
+        prop_by_locator: dict[str, str] = {}
+        for raw_locator in raw_page.get("locators", []) or []:
+            if not isinstance(raw_locator, dict):
+                continue
+            expression = str(raw_locator.get("locator", "")).strip()
+            label = str(raw_locator.get("name", "")).strip()
+            entry = by_locator.get(expression) or by_name.get(label.lower())
+            if entry is None:
+                continue                       # not verified -> not rendered
+            prop = safe_identifier(raw_locator.get("prop") or label or entry.get("name", "element"))
+            prop = _unique(prop, page.locators)
+            page.locators[prop] = entry["locator"]
+            page.roles[prop] = str(entry.get("role") or "")
+            prop_by_locator[entry["locator"]] = prop
+            if label:
+                prop_by_locator[label.lower()] = prop
+
+        for raw_method in raw_page.get("methods", []) or []:
+            if not isinstance(raw_method, dict) or not raw_method.get("name"):
+                continue
+            resolved: list[str] = []
+            for reference in raw_method.get("locators", []) or []:
+                key = str(reference).strip()
+                prop = prop_by_locator.get(key) or prop_by_locator.get(key.lower())
+                if prop is None and key in page.locators:
+                    prop = key
+                if prop:
+                    resolved.append(prop)
+            page.methods.append(
+                MethodPlan(
+                    name=safe_identifier(raw_method["name"], "run"),
+                    kind=str(raw_method.get("kind", "action")),
+                    params=[safe_identifier(p) for p in (raw_method.get("params") or [])][:6],
+                    locators=resolved,
+                    intent=str(raw_method.get("intent", ""))[:140],
+                    expect=str(raw_method.get("expect", "")),
+                )
+            )
+        plan.pages.append(page)
+
+    known_pages = {p.class_name for p in plan.pages}
+    for raw_step in data.get("steps", []) or []:
+        if not isinstance(raw_step, dict) or not raw_step.get("text"):
+            continue
+        page_name = pascal(str(raw_step.get("page", ""))) if raw_step.get("page") else ""
+        plan.steps.append(
+            StepPlan(
+                text=str(raw_step["text"]),
+                keyword=str(raw_step.get("keyword", "Given")).capitalize(),
+                page=page_name if page_name in known_pages else (page_name or ""),
+                call=str(raw_step.get("call", "")),
+                setup=bool(raw_step.get("setup", False)),
+            )
+        )
+
+    plan.reused_pages = [str(x) for x in (data.get("reused_pages") or [])][:20]
+    plan.reused_steps = [str(x) for x in (data.get("reused_steps") or [])][:40]
+    return plan
+
+
+def enrich_plan(
+    plan: GenerationPlan,
+    catalog: list[dict[str, Any]],
+    scenarios: list[dict[str, Any]],
+    *,
+    base_class: str = "",
+) -> GenerationPlan:
+    """Fill in the mechanical parts a plan left out.
+
+    A model may name the right methods but forget to bind locators, or plan the
+    Page Object and omit the step mapping. Both are recoverable from the
+    catalogue without another call, so the renderer completes them rather than
+    emitting a file full of TODOs.
+
+    The completion is **route-scoped**. The catalogue spans the whole
+    application, so binding a registration form to whatever happens to rank
+    first would mix login and search elements into one Page Object. Each page
+    is bound only to the elements of the single route it belongs to.
+    """
+    for page in plan.pages:
+        page.base_class = page.base_class or base_class
+
+        if page.locators:
+            # The locators survived validation against the catalogue, so the
+            # route they were captured on is evidence. A `route` field is not:
+            # a plan can assert one without naming a single element on it.
+            owner = _route_of(page.locators.values(), catalog)
+            if owner:
+                page.route, page.route_source = owner, "locators"
+        elif catalog:
+            derived = _best_route(catalog, page.class_name, scenarios)
+            if derived:
+                page.route, page.route_source = derived, "derived"
+            page.locators = _locators_from_catalog(_scoped(catalog, page.route))
+
+        if page.locators:
+            scoped = _scoped(catalog, page.route)
+            role_of = {i["locator"]: str(i.get("role") or "") for i in scoped if i.get("locator")}
+            for prop, expression in page.locators.items():
+                page.roles.setdefault(prop, role_of.get(expression, ""))
+            _bind_unbound_methods(page, scoped)
+
+    if not plan.steps and scenarios and plan.pages:
+        plan.steps = _steps_from_scenarios(scenarios, plan.pages[0])
+    plan.steps = resolve_keywords(plan.steps)
+    return plan
+
+
+def _scoped(catalog: list[dict[str, Any]], route: str) -> list[dict[str, Any]]:
+    """The catalogue entries belonging to one route."""
+    return [item for item in catalog if str(item.get("page")) == route] or catalog
+
+
+def _route_of(expressions: Any, catalog: list[dict[str, Any]]) -> str:
+    """The route most of these locators were captured on."""
+    wanted = set(expressions)
+    counts: dict[str, int] = {}
+    for item in catalog:
+        if item.get("locator") in wanted and item.get("page"):
+            counts[str(item["page"])] = counts.get(str(item["page"]), 0) + 1
+    if not counts:
+        return ""
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+_STOPWORDS = {"page", "the", "and", "with", "for", "new"}
+
+
+def _tokens(text: str) -> set[str]:
+    parts = re.split(r"[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])", str(text))
+    return {p.lower() for p in parts if p and p.lower() not in _STOPWORDS and len(p) > 2}
+
+
+def _related(left: set[str], right: set[str]) -> int:
+    """Overlap count, treating a shared 4-character prefix as a match.
+
+    'resident' and 'residents' are the same concept; exact set intersection
+    would miss every plural in a route.
+    """
+    hits = 0
+    for token in left:
+        for other in right:
+            if token == other or (
+                len(token) >= 4 and len(other) >= 4 and token[:4] == other[:4]
+            ):
+                hits += 1
+                break
+    return hits
+
+
+def _best_route(
+    catalog: list[dict[str, Any]], class_name: str, scenarios: list[dict[str, Any]]
+) -> str:
+    """Pick the route a Page Object belongs to, from the catalogue alone.
+
+    Scored on three signals: how well the route path matches the class name,
+    how well its element names match the scenario text, and whether it is a
+    submittable form when the scenarios describe submitting one.
+    """
+    by_route: dict[str, list[dict[str, Any]]] = {}
+    for item in catalog:
+        route = str(item.get("page") or "")
+        if route:
+            by_route.setdefault(route, []).append(item)
+    if not by_route:
+        return ""
+
+    target = _tokens(class_name)
+    scenario_text = " ".join(
+        str(step.get("text", ""))
+        for scenario in scenarios
+        for step in (scenario.get("steps") or [])
+    ) + " " + " ".join(str(s.get("name", "")) for s in scenarios)
+    scenario_tokens = _tokens(scenario_text)
+    wants_submit = bool(
+        _related({"submit", "create", "register", "save"}, scenario_tokens)
+    )
+
+    best, best_score = "", -1.0
+    for route, items in by_route.items():
+        fields = [i for i in items if i.get("role") in _INPUT_ROLES]
+        buttons = [i for i in items if i.get("role") == "button"]
+        element_tokens: set[str] = set()
+        for item in items:
+            element_tokens |= _tokens(item.get("name", ""))
+
+        score = 3.0 * _related(target, _tokens(route))
+        score += 1.0 * _related(scenario_tokens, element_tokens)
+        if wants_submit and buttons and any(i.get("required") for i in fields):
+            score += 4.0
+        score += 0.1 * len(fields)
+
+        if score > best_score:
+            best, best_score = route, score
+    return best if best_score > 0 else ""
+
+
+_INPUT_ROLES = ("textbox", "combobox", "checkbox", "radio")
+
+
+def _locators_from_catalog(catalog: list[dict[str, Any]], limit: int = 12) -> dict[str, str]:
+    """Name the route's interactive elements, fields before buttons.
+
+    De-duplicated by locator expression: the same element is often captured on
+    several routes, and rendering it twice produces `username` / `username2`
+    getters that point at the same thing.
+    """
+    fields = [c for c in catalog if c.get("role") in _INPUT_ROLES and c.get("locator")]
+    buttons = [c for c in catalog if c.get("role") == "button" and c.get("locator")]
+
+    out: dict[str, str] = {}
+    seen: set[str] = set()
+    for entry in [*fields, *buttons]:
+        expression = entry["locator"]
+        if expression in seen:
+            continue
+        seen.add(expression)
+        prop = _unique(safe_identifier(entry.get("name") or entry.get("role") or "element"), out)
+        out[prop] = expression
+        if len(out) >= limit:
+            break
+    return out
+
+
+_SUBMIT_WORDS = ("submit", "save", "create", "confirm", "click", "press")
+_FILL_WORDS = ("fill", "complete", "enter", "register", "provide", "populate")
+
+
+def _bind_unbound_methods(page: PagePlan, scoped: list[dict[str, Any]]) -> None:
+    """Bind methods that reference no locator, using the element's real role.
+
+    Roles come from the catalogue, never from the property name: a button named
+    `signIn` is a button because the DOM says so, not because of its spelling.
+    """
+    role_of = {item["locator"]: item.get("role") for item in scoped if item.get("locator")}
+    fields = [prop for prop, expr in page.locators.items() if role_of.get(expr) in _INPUT_ROLES]
+    buttons = [prop for prop, expr in page.locators.items() if role_of.get(expr) == "button"]
+
+    for method in page.methods:
+        if method.locators or method.kind != "action":
+            continue
+        lowered = method.name.lower()
+        if any(word in lowered for word in _SUBMIT_WORDS) and buttons:
+            method.locators = [buttons[0]]
+            method.params = []
+        elif any(word in lowered for word in _FILL_WORDS) and fields:
+            method.locators = list(fields)
+            # One parameter per field: the renderer pairs them positionally, so
+            # a mismatch would silently turn a fill into a click.
+            method.params = list(fields)
+
+
+def resolve_keywords(steps: list[StepPlan]) -> list[StepPlan]:
+    """Resolve And/But to the concrete keyword they continue.
+
+    Gherkin's `And` inherits meaning from the step above it. Coercing it to
+    `Given` - the old behaviour - registered assertions as preconditions.
+    """
+    current = "Given"
+    for step in steps:
+        keyword = (step.keyword or "").capitalize()
+        if keyword in ("Given", "When", "Then"):
+            current = keyword
+        step.keyword = current
+    return steps
+
+
+def _steps_from_scenarios(scenarios: list[dict[str, Any]], page: PagePlan) -> list[StepPlan]:
+    """Derive step bindings when the plan omitted them."""
+
+    def _method(kind: str, words: tuple[str, ...]) -> MethodPlan | None:
+        for method in page.methods:
+            if method.kind == kind and any(w in method.name.lower() for w in words):
+                return method
+        return None
+
+    submit = _method("action", _SUBMIT_WORDS)
+    fill = _method("action", _FILL_WORDS)
+    assertion = next((m for m in page.methods if m.kind == "assertion"), None)
+
+    steps: list[StepPlan] = []
+    seen: set[str] = set()
+    current = "Given"
+    for scenario in scenarios:
+        for index, raw in enumerate(scenario.get("steps", []) or []):
+            text = str(raw.get("text", "")).strip()
+            if not text:
+                continue
+            keyword = str(raw.get("keyword", "")).capitalize()
+            if keyword in ("Given", "When", "Then"):
+                current = keyword
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            call = ""
+            lowered = text.lower()
+            if current == "When":
+                if fill and any(w in lowered for w in ("complete", "fill", "enter", "provide", "details")):
+                    call = f"{fill.name}({', '.join(fill.params)})"
+                elif submit:
+                    call = f"{submit.name}()"
+            elif current == "Then" and assertion:
+                call = f"{assertion.name}({', '.join(assertion.params)})"
+
+            steps.append(
+                StepPlan(
+                    text=text,
+                    keyword=current,
+                    page=page.class_name,
+                    call=call,
+                    setup=(index == 0 and current == "Given"),
+                )
+            )
+    return steps
+
+
+def _unique(name: str, existing: dict[str, str]) -> str:
+    if name not in existing:
+        return name
+    index = 2
+    while f"{name}{index}" in existing:
+        index += 1
+    return f"{name}{index}"
+
+
+# --------------------------------------------------------------------------- #
+def deterministic_plan(
+    class_name: str,
+    catalog: list[dict[str, Any]],
+    scenarios: list[dict[str, Any]],
+    *,
+    base_class: str = "",
+    route: str = "/",
+) -> GenerationPlan:
+    """Build a usable plan with no model at all.
+
+    Used as the fallback when a model is unavailable or returns nothing usable,
+    so the pipeline degrades to a working scaffold rather than failing.
+
+    Scopes the catalogue to one route, exactly as `enrich_plan` does. This path
+    is easy to forget because it only runs when a model fails — and when it did,
+    it produced a registration page carrying the login form's fields and two
+    copies of each. A fallback that silently generates nonsense is worse than
+    one that fails loudly.
+    """
+    # There is no model here, so the `route` argument is always a caller's
+    # guess — never an assertion backed by chosen locators. The catalogue is
+    # better evidence, so it wins whenever it can identify a route.
+    route = _best_route(catalog, class_name, scenarios) or route
+    scoped = _scoped(catalog, route)
+
+    page = PagePlan(class_name=class_name, route=route, base_class=base_class,
+                    description="Scaffolded from the verified locator catalogue.")
+
+    # De-duplicated by locator expression: the same element is often captured on
+    # several routes, and rendering it twice yields `username` / `username2`
+    # getters pointing at the same thing.
+    seen: set[str] = set()
+    fields: list[dict[str, Any]] = []
+    buttons: list[dict[str, Any]] = []
+    for entry in scoped:
+        expression = entry.get("locator")
+        if not expression or expression in seen:
+            continue
+        seen.add(expression)
+        if entry.get("role") in _INPUT_ROLES and len(fields) < 10:
+            fields.append(entry)
+        elif entry.get("role") == "button" and len(buttons) < 4:
+            buttons.append(entry)
+
+    fill_params: list[str] = []
+    fill_locators: list[str] = []
+    for entry in fields:
+        prop = _unique(safe_identifier(entry.get("name") or "field"), page.locators)
+        page.locators[prop] = entry["locator"]
+        page.roles[prop] = str(entry.get("role") or "")
+        fill_params.append(prop)
+        fill_locators.append(prop)
+
+    submit_prop = ""
+    if buttons:
+        submit_prop = _unique(safe_identifier(buttons[0].get("name") or "submit"), page.locators)
+        page.locators[submit_prop] = buttons[0]["locator"]
+        page.roles[submit_prop] = "button"
+
+    if fill_locators:
+        page.methods.append(
+            MethodPlan(name="fillForm", kind="action", params=fill_params,
+                       locators=fill_locators, intent="Complete the form with the supplied values.")
+        )
+    if submit_prop:
+        page.methods.append(
+            MethodPlan(name="submit", kind="action", locators=[submit_prop], intent="Submit the form.")
+        )
+    page.methods.append(
+        MethodPlan(name="expectSuccess", kind="assertion", params=["message"],
+                   expect="toContainText", intent="Assert the operation succeeded.")
+    )
+
+    # Reuse the enrichment path's binding rather than a cruder rule here.
+    # Mapping every `When` to `submit()` produced steps like "I fill in valid
+    # resident details" calling submit and never filling anything — code that
+    # compiles, runs, and tests the wrong thing.
+    return GenerationPlan(pages=[page], steps=_steps_from_scenarios(scenarios, page))

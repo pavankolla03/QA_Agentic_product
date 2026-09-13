@@ -7,7 +7,9 @@ failures as :class:`ProviderError` so the model router can fall back.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import time
 from collections.abc import Sequence
 from typing import Any
 
@@ -15,6 +17,9 @@ import httpx
 
 from packages.aiqa_types.models import TokenUsage
 from packages.llm_provider.base import BaseProvider, LLMRequest, LLMResponse, ProviderError
+from packages.llm_provider.keyring import KeyRing, fingerprint
+
+log = logging.getLogger("aiqa.provider")
 
 
 def _client(timeout: int) -> httpx.AsyncClient:
@@ -31,6 +36,86 @@ def _raise_for(provider: str, resp: httpx.Response) -> None:
 # --------------------------------------------------------------------------- #
 # OpenAI-compatible family (OpenAI, OpenRouter, Ollama's /v1, MLX servers)
 # --------------------------------------------------------------------------- #
+#: Providers that bill a discounted rate for a re-sent prompt prefix, but only
+#: when the request marks it. Everyone else (OpenAI, DeepSeek, Gemini) caches
+#: automatically on an exact prefix match and needs no flag — for those, the
+#: saving comes from keeping the prefix byte-identical, which the agents do.
+_EXPLICIT_CACHE_MARKERS = ("anthropic", "claude")
+
+
+#: Models that are rate limited right now: model id -> monotonic time when it
+#: may be tried again.
+#:
+#: This is separate from the key ring on purpose. OpenRouter proxies to upstream
+#: hosts that each enforce their own limits, so a 429 from one free model says
+#: nothing about the next one in the tier. Conflating the two disabled the whole
+#: provider whenever a single model was busy, and every call in the run fell
+#: through to the offline stub — a pipeline that reported success having spoken
+#: to no model at all.
+_MODEL_COOLDOWN: dict[str, float] = {}
+
+#: A busy free model usually clears quickly; the tier has other entries to use
+#: in the meantime, so this does not need to be long.
+MODEL_COOLDOWN_SECONDS = 30.0
+
+
+def model_cooling(model: str) -> bool:
+    until = _MODEL_COOLDOWN.get(model, 0.0)
+    if not until:
+        return False
+    if time.monotonic() >= until:
+        _MODEL_COOLDOWN.pop(model, None)
+        return False
+    return True
+
+
+def cool_model(model: str, seconds: float = MODEL_COOLDOWN_SECONDS) -> None:
+    _MODEL_COOLDOWN[model] = time.monotonic() + seconds
+
+
+def is_upstream_error(detail: str) -> bool:
+    """Did the model's host refuse, rather than OpenRouter itself?
+
+    OpenRouter wraps an upstream failure as "Provider returned error" and names
+    the host. Its own account-level limits carry neither marker.
+    """
+    lowered = (detail or "").lower()
+    return "provider returned error" in lowered or "provider_name" in lowered
+
+
+#: Models observed to reject `response_format`. Populated at runtime rather
+#: than hard-coded: which upstream provider serves a given free model changes
+#: without notice, and so does whether that provider implements the feature.
+_NO_STRUCTURED_OUTPUT: set[str] = set()
+
+#: The upstream complaint, which is not a standard error code.
+_STRUCTURED_OUTPUT_REJECTIONS = (
+    "does not support feature: structured-outputs",
+    "structured outputs are not supported",
+    "response_format is not supported",
+    "unsupported parameter: 'response_format'",
+)
+
+
+def rejects_structured_output(detail: str) -> bool:
+    lowered = (detail or "").lower()
+    return any(marker in lowered for marker in _STRUCTURED_OUTPUT_REJECTIONS)
+
+
+def _wants_cache(req: LLMRequest) -> bool:
+    """Did the caller mark a prefix worth caching?
+
+    The router sets this only when the stable prefix clears the configured
+    minimum, so a short system prompt never pays the cache-write premium.
+    """
+    return int((req.metadata or {}).get("cache_prefix_chars", 0)) > 0
+
+
+def _cache_breakpoint(text: str) -> list[dict[str, Any]]:
+    """A single text block marked as the end of the cacheable prefix."""
+    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+
+
 class OpenAICompatibleProvider(BaseProvider):
     """Implements the `/chat/completions` contract shared by many providers."""
 
@@ -45,16 +130,39 @@ class OpenAICompatibleProvider(BaseProvider):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
+    #: Set by subclasses that can forward an explicit cache marker upstream.
+    supports_explicit_cache = False
+
     def _payload(self, req: LLMRequest) -> dict[str, Any]:
+        messages = [m.to_dict() for m in req.messages]
+        model = req.model or self.default_model
+
+        if (
+            self.supports_explicit_cache
+            and _wants_cache(req)
+            and any(marker in model.lower() for marker in _EXPLICIT_CACHE_MARKERS)
+        ):
+            # Anthropic models charge a discounted rate for a cached prefix, but
+            # only when the request says where that prefix ends. Marking the
+            # system message is enough: everything before the breakpoint is
+            # cached, and the system prompt is the part that repeats verbatim.
+            for message in messages:
+                if message.get("role") == "system" and isinstance(message.get("content"), str):
+                    message["content"] = _cache_breakpoint(message["content"])
+                    break
+
         payload: dict[str, Any] = {
-            "model": req.model or self.default_model,
-            "messages": [m.to_dict() for m in req.messages],
+            "model": model,
+            "messages": messages,
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         }
         if req.stop:
             payload["stop"] = req.stop
-        if req.json_mode:
+        if req.json_mode and model not in _NO_STRUCTURED_OUTPUT:
+            # Asked for, not relied upon: the system prompt already demands bare
+            # JSON and `ask_json` parses defensively, so a model that cannot
+            # honour this still produces usable output.
             payload["response_format"] = {"type": "json_object"}
         return payload
 
@@ -125,20 +233,113 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     """OpenRouter — the cheapest path to many free models."""
 
     name = "openrouter"
+    #: OpenRouter passes `cache_control` straight through to Anthropic models.
+    #: For the free models it routes to, caching is either automatic or
+    #: irrelevant, so the marker is only added when the model bills for it.
+    supports_explicit_cache = True
 
     def __init__(
         self,
         api_key: str = "",
         base_url: str = "https://openrouter.ai/api/v1",
         default_model: str = "deepseek/deepseek-chat-v3-0324:free",
+        api_keys: list[str] | None = None,
     ) -> None:
-        super().__init__(api_key=api_key, base_url=base_url, default_model=default_model)
+        # The free tier is rate-limited per key. With one key a long run stops
+        # partway through the day; with several it rotates and carries on.
+        self.keys = KeyRing(api_keys or ([api_key] if api_key else []))
+        super().__init__(api_key=self.keys.current(), base_url=base_url, default_model=default_model)
 
     def _headers(self) -> dict[str, str]:
-        headers = super()._headers()
+        # Read the live key each time: a rotation between requests must take
+        # effect without rebuilding the provider.
+        active = self.keys.current() or self.api_key
+        headers = {"Content-Type": "application/json"}
+        if active:
+            headers["Authorization"] = f"Bearer {active}"
         headers["HTTP-Referer"] = "https://github.com/aiqa-engineer"
         headers["X-Title"] = "AI QA Engineer"
         return headers
+
+    @property
+    def configured(self) -> bool:  # type: ignore[override]
+        return bool(self.keys.current())
+
+    async def _chat(self, req: LLMRequest) -> LLMResponse:
+        """Send the request, adapting to what this model and key can do.
+
+        Two things are handled here that a paid provider never needs:
+
+        * **A model that rejects `response_format`.** Common among free models,
+          and a hard 400 rather than a graceful degradation. The model is noted
+          and the request is retried immediately without the parameter, so one
+          wasted call teaches the process for the rest of the session.
+        * **Key rotation.** Bounded to one pass through the ring; a
+          provider-wide outage must not burn every key's retry budget.
+        """
+        # One pass through the ring, plus one extra iteration reserved for
+        # dropping `response_format`. Without the reservation a single-key
+        # install could never perform that retry at all.
+        attempts = max(1, len(self.keys)) + 1
+        structured_retried = False
+        last: ProviderError | None = None
+
+        for _attempt in range(attempts):
+            if not self.keys.current():
+                break
+            try:
+                response = await super()._chat(req)
+            except ProviderError as exc:
+                last = exc
+                model = req.model or self.default_model
+
+                if (
+                    exc.status == 400
+                    and req.json_mode
+                    and not structured_retried
+                    and model not in _NO_STRUCTURED_OUTPUT
+                    and rejects_structured_output(str(exc))
+                ):
+                    structured_retried = True
+                    _NO_STRUCTURED_OUTPUT.add(model)
+                    log.info(
+                        "%s rejects response_format; retrying without it and "
+                        "relying on the prompt for JSON",
+                        model,
+                    )
+                    continue                  # same key, one parameter lighter
+
+                if exc.status == 429 and is_upstream_error(str(exc)):
+                    # This model's host is busy. The key is fine, and the tier
+                    # has other models: park this one and let the router fall
+                    # through rather than retrying the same busy endpoint.
+                    cool_model(model)
+                    log.info("%s is rate limited upstream; trying the next model", model)
+                    raise
+
+                if not self.keys.record_failure(exc.status, str(exc)):
+                    raise
+                log.warning(
+                    "openrouter key %s unusable (HTTP %s); rotating to %s",
+                    fingerprint(self.api_key),
+                    exc.status or "?",
+                    fingerprint(self.keys.current()) or "(none available)",
+                )
+                self.api_key = self.keys.current()
+                continue
+
+            self.keys.record_success()
+            return response
+
+        if last is not None:
+            raise last
+        raise ProviderError(self.name, "no usable API key is available right now", retryable=True)
+
+    def model_available(self, model: str) -> bool:  # type: ignore[override]
+        return not model_cooling(model or self.default_model)
+
+    def key_status(self) -> dict[str, Any]:
+        return self.keys.snapshot()
 
 
 class OllamaProvider(BaseProvider):
@@ -240,7 +441,13 @@ class AnthropicProvider(BaseProvider):
             "temperature": req.temperature,
         }
         if system_parts:
-            payload["system"] = "\n\n".join(system_parts)
+            system_text = "\n\n".join(system_parts)
+            # The system prompt carries the house standards and conventions and
+            # is byte-identical between runs, so it is exactly what should be
+            # billed once rather than on every call.
+            payload["system"] = (
+                _cache_breakpoint(system_text) if _wants_cache(req) else system_text
+            )
         if req.stop:
             payload["stop_sequences"] = req.stop
 

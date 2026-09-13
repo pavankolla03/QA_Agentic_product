@@ -287,6 +287,41 @@ export class ApiClient {
     return this.request(`/api/projects/${projectId}/knowledge`);
   }
 
+  /** Per-test health and quarantine advice. */
+  suiteHealth(projectId: string): Promise<Record<string, any>> {
+    return this.request(`/api/projects/${projectId}/health`);
+  }
+
+  /** Quarantine or release one test, or apply the recommendations in bulk. */
+  quarantine(projectId: string, body: Record<string, any>): Promise<Record<string, any>> {
+    return this.request(`/api/projects/${projectId}/quarantine`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Probe the running application for self-evident defects. */
+  exploratory(projectId: string, maxProbes = 40): Promise<Record<string, any>> {
+    return this.request(`/api/projects/${projectId}/explore`, {
+      method: 'POST',
+      body: JSON.stringify({ max_probes: maxProbes }),
+    });
+  }
+
+  /** Price a batch of requirements without starting anything. */
+  batchPlan(projectId: string, body: Record<string, any>): Promise<Record<string, any>> {
+    return this.request(`/api/projects/${projectId}/batch/plan`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** What the suite does not cover, worst gaps first. */
+  projectCoverage(projectId: string, severity = ''): Promise<Record<string, any>> {
+    const query = severity ? `?severity=${encodeURIComponent(severity)}` : '';
+    return this.request(`/api/projects/${projectId}/coverage${query}`);
+  }
+
   agentPermissions(): Promise<Record<string, any>> {
     return this.request('/api/permissions');
   }

@@ -79,6 +79,10 @@ class TestKnowledge:
     feature: str = ""
     requirement: str = ""
     tags: list[str] = field(default_factory=list)
+    #: Acceptance criteria this scenario verifies, stored as text.
+    #: Criterion *ids* are regenerated every run, so text is the only identity
+    #: that survives long enough to answer "do we already cover this?".
+    covers_criteria: list[str] = field(default_factory=list)
 
     feature_file: str = ""
     step_file: str = ""

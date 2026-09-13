@@ -40,6 +40,7 @@ def _last_user(req: LLMRequest) -> str:
 _FOCUS_MARKERS = (
     "QA engineer's request:",
     "Feature to automate:",
+    "## Scenarios to support",
     "## Requirement",
     "Requirement:",
     "Title:",
@@ -53,6 +54,11 @@ def _focus(prompt: str) -> str:
         if index == -1:
             continue
         tail = prompt[index + len(marker):].strip()
+        if marker == "## Scenarios to support":
+            # The scenarios block is JSON; the feature name lives in the names.
+            match = re.search(r'"name"\s*:\s*"([^"]+)"', tail)
+            if match:
+                return match.group(1)
         if marker == "## Requirement":
             for line in tail.splitlines():
                 if line.lower().startswith("title:"):
@@ -138,13 +144,67 @@ def _requirement(prompt: str) -> dict[str, Any]:
     }
 
 
-def _test_plan(prompt: str) -> dict[str, Any]:
+_ENDPOINT_RE = re.compile(r"^\s{2}(GET|POST|PUT|PATCH|DELETE)\s+(/\S*)", re.MULTILINE)
+
+
+def _endpoints(prompt: str) -> list[tuple[str, str]]:
+    """The endpoints the design prompt said were observed."""
+    return _ENDPOINT_RE.findall(prompt)
+
+
+def _criterion_ids(prompt: str) -> list[str]:
+    """The acceptance-criterion ids the design prompt listed.
+
+    The prompt renders each criterion as `[ac_xxxx] text`, and the contract
+    requires every scenario to cite at least one. Tracing them here is not
+    cosmetic: it is what lets a later run recognise that the requirement is
+    already covered and skip the design call entirely.
+    """
+    return re.findall(r"\[(ac_[0-9a-fA-F]+)\]", prompt)
+
+
+def _test_plan(prompt: str, raw: str = "") -> dict[str, Any]:
+    """A compact plan, in the same shape the real contract asks for.
+
+    Test ids, tags and file names are deliberately absent: the agent derives
+    them, so a model that emits them is only spending output tokens.
+
+    Takes the raw prompt as well as the focused one: the feature name comes from
+    the headline, but the acceptance-criterion ids are further down.
+    """
     name = _feature_name(prompt)
-    slug = _slug(name)
-    code = _abbrev(name)
-    page = f"{_pascal(name)}Page"
+    lower = name.lower()
+    ids = _criterion_ids(raw or prompt)
+    endpoints = _endpoints(raw or prompt)
+
+    # Plan an API check only for an endpoint that was actually observed. A
+    # write endpoint gets a create check; everything else gets a read check.
+    api_checks: list[dict[str, Any]] = []
+    for method, path in endpoints[:3]:
+        writing = method in ("POST", "PUT", "PATCH")
+        api_checks.append(
+            {
+                # No claim about *which* 2xx: a login POST returns 200, a create
+                # returns 201, and the platform has not seen a response yet.
+                # `0` means "assert success, not a specific code".
+                "name": (
+                    f"{method} {path} accepts a valid request"
+                    if writing
+                    else f"{method} {path} is reachable and returns a body"
+                ),
+                "method": method,
+                "path": path,
+                "expect_status": 0,
+                "asserts": ["id"] if writing else [],
+                "criteria": ids[:1],
+            }
+        )
+
+    def cite(index: int) -> list[str]:
+        return [ids[index]] if index < len(ids) else []
+
     return {
-        "title": f"Test plan — {name}",
+        "title": f"Test plan - {name}",
         "strategy": (
             "Risk-based coverage: one happy path, mandatory-field validation, a duplicate/negative case, "
             "a data-driven boundary set, and a persistence check via the listing view. "
@@ -153,61 +213,55 @@ def _test_plan(prompt: str) -> dict[str, Any]:
         "features": [
             {
                 "name": name,
-                "file_name": f"{slug}.feature",
-                "description": f"As a user I want to manage {name.lower()} so that records stay accurate.",
-                "tags": ["@regression", f"@{slug}"],
+                "desc": f"As a user I want to manage {lower} so that records stay accurate.",
                 "background": [
-                    {"keyword": "Given", "text": "I am logged in as a standard user"},
-                    {"keyword": "And", "text": f"I navigate to the {name} page"},
+                    "Given I am logged in as a standard user",
+                    f"And I navigate to the {name} page",
                 ],
                 "scenarios": [
                     {
-                        "test_id": f"TC-{code}-001",
-                        "name": f"Create a new {name.lower()} with valid details",
-                        "tags": ["@smoke", "@P1"],
-                        "priority": "P1",
-                        "negative": False,
+                        "name": f"Create a new {lower} with valid details",
+                        "p": "P1",
+                        "neg": False,
+                        "criteria": cite(0),
                         "steps": [
-                            {"keyword": "When", "text": f"I complete the {name.lower()} form with valid details"},
-                            {"keyword": "And", "text": "I submit the form"},
-                            {"keyword": "Then", "text": "a success confirmation is displayed"},
-                            {"keyword": "And", "text": "the record appears in the results list"},
+                            f"When I complete the {lower} form with valid details",
+                            "And I submit the form",
+                            "Then a success confirmation is displayed",
+                            "And the record appears in the results list",
                         ],
                     },
                     {
-                        "test_id": f"TC-{code}-002",
                         "name": "Mandatory field validation is enforced",
-                        "tags": ["@regression", "@P1", "@negative"],
-                        "priority": "P1",
-                        "negative": True,
+                        "p": "P1",
+                        "neg": True,
+                        "criteria": cite(1),
                         "steps": [
-                            {"keyword": "When", "text": "I submit the form without completing mandatory fields"},
-                            {"keyword": "Then", "text": "a validation message is shown for each mandatory field"},
-                            {"keyword": "And", "text": "the record is not created"},
+                            "When I submit the form without completing mandatory fields",
+                            "Then a validation message is shown for each mandatory field",
+                            "And the record is not created",
                         ],
                     },
                     {
-                        "test_id": f"TC-{code}-003",
                         "name": "Duplicate records are rejected",
-                        "tags": ["@regression", "@P2", "@negative"],
-                        "priority": "P2",
-                        "negative": True,
+                        "p": "P2",
+                        "neg": True,
+                        "criteria": cite(2),
                         "steps": [
-                            {"keyword": "Given", "text": "a record already exists with the same unique identifier"},
-                            {"keyword": "When", "text": "I submit the form with that identifier"},
-                            {"keyword": "Then", "text": "a duplicate error message is displayed"},
+                            "Given a record already exists with the same unique identifier",
+                            "When I submit the form with that identifier",
+                            "Then a duplicate error message is displayed",
                         ],
                     },
                     {
-                        "test_id": f"TC-{code}-004",
                         "name": "Field boundary validation",
-                        "tags": ["@regression", "@P2", "@data-driven"],
-                        "priority": "P2",
-                        "data_driven": True,
+                        "p": "P2",
+                        "neg": True,
+                        "criteria": cite(1),
                         "steps": [
-                            {"keyword": "When", "text": 'I enter "<value>" into the "<field>" field'},
-                            {"keyword": "And", "text": "I submit the form"},
-                            {"keyword": "Then", "text": 'I should see "<outcome>"'},
+                            'When I enter "<value>" into the "<field>" field',
+                            "And I submit the form",
+                            'Then I should see "<outcome>"',
                         ],
                         "examples": [
                             {"field": "name", "value": "", "outcome": "Name is required"},
@@ -216,29 +270,49 @@ def _test_plan(prompt: str) -> dict[str, Any]:
                         ],
                     },
                     {
-                        "test_id": f"TC-{code}-005",
                         "name": "Created record is retrievable via search",
-                        "tags": ["@regression", "@P2"],
-                        "priority": "P2",
+                        "p": "P2",
+                        "neg": False,
+                        "criteria": cite(3),
                         "steps": [
-                            {"keyword": "Given", "text": "a record has been created"},
-                            {"keyword": "When", "text": "I search for it by its unique identifier"},
-                            {"keyword": "Then", "text": "the matching record is displayed"},
+                            "Given a record has been created",
+                            "When I search for it by its unique identifier",
+                            "Then the matching record is displayed",
+                        ],
+                    },
+                    {
+                        "name": "Access is restricted to permitted roles",
+                        "p": "P2",
+                        "neg": True,
+                        "criteria": cite(4),
+                        "steps": [
+                            "Given I am signed in without the required permission",
+                            f"When I open the {name} page",
+                            "Then the action is not available to me",
                         ],
                     },
                 ],
             }
         ],
-        "page_objects_needed": [page, "SearchResultsPage"],
-        "api_checks": [f"GET /api/{slug} returns the created record"],
-        "db_checks": [f"A row exists in the {slug.replace('-', '_')} table with the expected identifier"],
-        "risks": [
-            "Locators may be unstable if the form lacks data-testid attributes",
-            "Duplicate-detection rules may differ per environment",
+        "new_pages": [f"{_pascal(name)}Page"],
+        "reuse_pages": ["LoginPage"],
+        "reuse_fixtures": ["authenticatedPage"],
+        "api_checks": api_checks,
+        "db_checks": [
+            {
+                "name": "exactly one row exists for the unique identifier",
+                "table": _slug(name).replace("-", "_"),
+                "where": "unique_identifier = :id",
+                "expect_rows": 1,
+                "criteria": ids[:1],
+            }
         ],
-        "coverage_notes": "Covers all stated acceptance criteria; permissions coverage deferred to the RBAC suite.",
+        "risks": [
+            "duplicate detection may be case-sensitive",
+            "boundary rules for optional fields are unspecified",
+        ],
+        "notes": "Every acceptance criterion is covered by at least one scenario.",
     }
-
 
 def _failure_analysis(prompt: str) -> dict[str, Any]:
     lowered = prompt.lower()
@@ -358,7 +432,43 @@ def _orchestrator(prompt: str) -> dict[str, Any]:
     }
 
 
+
+
+def _generation_plan(prompt: str) -> dict[str, Any]:
+    """Offline plan for the merged code-generation call.
+
+    Mirrors the real contract: reference only catalogue entries, name methods by
+    intent, bind every step. The renderer discards anything not in the
+    catalogue, so this stays deliberately conservative.
+    """
+    name = _feature_name(prompt)
+    page = f"{_pascal(name)}Page"
+    return {
+        "pages": [
+            {
+                "class": page,
+                "description": f"Automates {name.lower()}.",
+                "locators": [],
+                "methods": [
+                    {"name": "fillForm", "kind": "action", "params": ["value"], "locators": [],
+                     "intent": f"Complete the {name.lower()} form."},
+                    {"name": "submit", "kind": "action", "params": [], "locators": [],
+                     "intent": "Submit the form."},
+                    {"name": "expectSuccess", "kind": "assertion", "params": ["message"],
+                     "locators": [], "expect": "toContainText",
+                     "intent": "Assert the operation succeeded."},
+                ],
+            }
+        ],
+        "steps": [],
+        "reused_pages": [],
+        "reused_steps": [],
+        "notes": ["offline deterministic plan"],
+    }
+
+
 _HANDLERS: dict[str, Any] = {
+    "code_generation.plan": _generation_plan,
     "requirement.analyze": _requirement,
     "test_design.plan": _test_plan,
     "failure_analysis.classify": _failure_analysis,
@@ -368,6 +478,10 @@ _HANDLERS: dict[str, Any] = {
     "reporting.summarize": _report,
     "orchestrator.route": _orchestrator,
 }
+
+
+#: Handlers that need the whole prompt, not just the focused headline.
+_NEEDS_RAW = {"test_design.plan"}
 
 
 class MockProvider(BaseProvider):
@@ -381,7 +495,8 @@ class MockProvider(BaseProvider):
         super().__init__(default_model=default_model)
 
     async def _chat(self, req: LLMRequest) -> LLMResponse:
-        prompt = _focus(_last_user(req))
+        raw = _last_user(req)
+        prompt = _focus(raw)
         handler = _HANDLERS.get(req.task)
 
         if handler is None:
@@ -389,7 +504,7 @@ class MockProvider(BaseProvider):
             payload: Any = {"result": "ok", "task": req.task, "note": "offline deterministic provider"}
             text = json.dumps(payload, indent=2) if req.json_mode else _report(prompt)
         else:
-            produced = handler(prompt)
+            produced = handler(prompt, raw) if req.task in _NEEDS_RAW else handler(prompt)
             text = json.dumps(produced, indent=2) if isinstance(produced, (dict, list)) else str(produced)
 
         return LLMResponse(text=text, model=req.model or self.default_model, finish_reason="stop")
