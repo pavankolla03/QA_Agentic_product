@@ -41,4 +41,21 @@ def is_control_signal(exc: BaseException) -> bool:
     return isinstance(exc, AgentSignal)
 
 
-__all__ = ["AgentSignal", "ApprovalRequired", "AgentFailure", "is_control_signal"]
+from packages.agent_protocol.permissions import (  # noqa: E402,F401
+    AGENT_PERMISSIONS,
+    TOOL_CAPABILITY,
+    AgentPermissions,
+    permissions_for,
+)
+from packages.agent_protocol.permissions import (
+    Capability as AgentCapability,
+)
+from packages.agent_protocol.permissions import (
+    describe as describe_permissions,
+)
+
+__all__ = [
+    "AgentSignal", "ApprovalRequired", "AgentFailure", "is_control_signal",
+    "AGENT_PERMISSIONS", "TOOL_CAPABILITY", "AgentPermissions", "AgentCapability",
+    "describe_permissions", "permissions_for",
+]

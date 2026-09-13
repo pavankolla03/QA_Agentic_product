@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from packages.agent_protocol import AgentFailure, ApprovalRequired  # noqa: F401
+from packages.agent_protocol.permissions import TOOL_CAPABILITY, permissions_for
 from packages.aiqa_types.enums import (
     AgentName,
     ApprovalKind,
@@ -223,8 +224,27 @@ class BaseAgent(abc.ABC):
 
     # -- tool helpers --------------------------------------------------- #
     def tool(self, ctx: AgentContext, name: str, **kwargs: Any) -> ToolResult:
+        """Invoke a tool, subject to this agent's permission grant.
+
+        Enforced here rather than trusted to the prompt: an agent reads
+        untrusted content (repository files, DOM text, failure output), and a
+        capability check is the only thing that cannot be talked out of.
+        """
         if ctx.tools is None:
             return ToolResult.failure("no tool registry bound to this run")
+
+        permissions = permissions_for(self.name.value)
+        if not permissions.allows_tool(name):
+            required = TOOL_CAPABILITY.get(name)
+            message = (
+                f"agent '{self.name.value}' is not permitted to use '{name}'"
+                + (f" (requires {required.value})" if required else " (unknown tool)")
+            )
+            ctx.warn(message)
+            if ctx.tracker:
+                ctx.tracker.audit("policy_violation", name, "denied", message)
+            return ToolResult.failure(message, rule="agent.permission")
+
         return ctx.tools.invoke(name, **kwargs)
 
     # -- approval helper ------------------------------------------------ #

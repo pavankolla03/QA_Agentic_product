@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -66,8 +67,23 @@ class RunNotFound(LookupError):
 class AgentEngine:
     """Entry point the API gateway calls."""
 
-    def __init__(self, orchestrator: Orchestrator | None = None, offline: bool | None = None) -> None:
-        self.orchestrator = orchestrator or Orchestrator()
+    def __init__(
+        self,
+        orchestrator: Orchestrator | None = None,
+        offline: bool | None = None,
+        use_langgraph: bool | None = None,
+    ) -> None:
+        # LangGraph when it is installed, the built-in graph otherwise. Both
+        # drive the same agents and return the same GraphResult, so this is a
+        # deployment choice rather than a behavioural one.
+        if orchestrator is None:
+            from agents.orchestrator.langgraph_graph import build_orchestrator
+
+            prefer = os.environ.get("AIQA_ORCHESTRATOR", "langgraph").lower() != "builtin"
+            if use_langgraph is not None:
+                prefer = use_langgraph
+            orchestrator = build_orchestrator(prefer_langgraph=prefer)
+        self.orchestrator = orchestrator
         self.settings = get_settings()
         self.offline = offline
         #: run_id -> listeners, for live WebSocket streaming

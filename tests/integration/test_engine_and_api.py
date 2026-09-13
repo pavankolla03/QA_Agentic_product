@@ -430,3 +430,81 @@ async def test_generate_mode_writes_files_but_does_not_execute(engine, project, 
         row = session.get(RunRow, run_id)
         assert row.code_bundle is not None
         assert row.tests_total == 0, "generate mode must not execute the suite"
+
+
+# =========================================================================== #
+# Orchestrator backends must be interchangeable
+# =========================================================================== #
+async def test_langgraph_and_builtin_orchestrators_agree(project, org_user, repo_copy) -> None:
+    """Both backends drive the same agents, so they must reach the same result."""
+    from agents.orchestrator.graph import Orchestrator, build_default_nodes
+    from agents.orchestrator.langgraph_graph import LANGGRAPH_AVAILABLE, LangGraphOrchestrator
+    from services.agent_engine.engine import AgentEngine
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+
+    if not LANGGRAPH_AVAILABLE:
+        import pytest
+
+        pytest.skip("langgraph is not installed")
+
+    from packages.aiqa_types.models import new_id
+    from services.observability.models import ProjectRow
+
+    org_id, user_id = org_user
+    outcomes = {}
+    for label, orchestrator in (
+        ("builtin", Orchestrator(build_default_nodes())),
+        ("langgraph", LangGraphOrchestrator(build_default_nodes())),
+    ):
+        # Each backend gets its own project id, and therefore its own Test
+        # Knowledge Store. Sharing one would make the second run correctly
+        # dedupe against the first and look like a divergence.
+        project_id = new_id("prj")
+        with session_scope() as session:
+            session.add(
+                ProjectRow(
+                    id=project_id, org_id=org_id, name=f"equivalence-{label}",
+                    repository_path=str(repo_copy), base_url="http://127.0.0.1:59999",
+                )
+            )
+
+        engine = AgentEngine(orchestrator=orchestrator, offline=True)
+        run_id = engine.create_run(
+            RunRequest(project_id=project_id, instruction="Automate resident registration",
+                       mode=RunMode.PLAN_ONLY, auto_approve=True),
+            user_id=user_id, org_id=org_id,
+        )
+        result = await engine.run_to_completion(run_id, auto_approve=True)
+        with session_scope() as session:
+            row = session.get(RunRow, run_id)
+            scenarios = sum(len(f.get("scenarios", [])) for f in (row.test_plan or {}).get("features", []))
+            has_report = row.report is not None
+        outcomes[label] = (result.status, scenarios, has_report)
+
+    assert outcomes["builtin"] == outcomes["langgraph"], outcomes
+
+
+async def test_langgraph_honours_approval_gates(project, org_user) -> None:
+    from agents.orchestrator.graph import build_default_nodes
+    from agents.orchestrator.langgraph_graph import LANGGRAPH_AVAILABLE, LangGraphOrchestrator
+    from services.agent_engine.engine import AgentEngine
+
+    if not LANGGRAPH_AVAILABLE:
+        import pytest
+
+        pytest.skip("langgraph is not installed")
+
+    org_id, user_id = org_user
+    engine = AgentEngine(orchestrator=LangGraphOrchestrator(build_default_nodes()), offline=True)
+    run_id = engine.create_run(
+        RunRequest(project_id=project.id, instruction="Automate resident registration", mode=RunMode.FULL),
+        user_id=user_id, org_id=org_id,
+    )
+    result = await engine.execute(run_id)
+    assert result.status == RunStatus.WAITING_APPROVAL
+    assert result.suspended_at == "test_design"
+
+    engine.respond_to_approval(result.approval_id, approved=True, user_id=user_id)
+    resumed = await engine.execute(run_id)
+    assert resumed.visited[0] == "test_design", "resume must re-enter the suspending node"
