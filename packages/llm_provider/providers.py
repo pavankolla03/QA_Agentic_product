@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import httpx
 
@@ -394,7 +395,7 @@ class HashingEmbeddingProvider(BaseProvider):
         if not tokens:
             return vec
         # unigrams + bigrams give a little word-order sensitivity
-        grams = tokens + [f"{a}_{b}" for a, b in zip(tokens, tokens[1:])]
+        grams = tokens + [f"{a}_{b}" for a, b in zip(tokens, tokens[1:], strict=False)]
         for gram in grams:
             digest = hashlib.blake2b(gram.encode("utf-8"), digest_size=8).digest()
             idx = int.from_bytes(digest[:4], "big") % self.dim

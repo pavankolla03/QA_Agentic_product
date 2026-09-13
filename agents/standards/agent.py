@@ -19,8 +19,9 @@ for the human to weigh.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import PurePosixPath
-from typing import Any, Callable
+from typing import Any
 
 from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import AgentName, ArtifactKind, Capability, Severity
@@ -377,8 +378,9 @@ def lint_existing_repo(ctx: AgentContext, paths: list[str] | None = None) -> Sta
     Exposed as a standalone command so a team can ask "how compliant is our
     existing suite?" without running a generation cycle.
     """
-    from tools.filesystem.fs_tools import iter_source_files
     from pathlib import Path
+
+    from tools.filesystem.fs_tools import iter_source_files
 
     agent = StandardsAgent()
     rules = [r for r in (ctx.standards.get("rules") or []) if isinstance(r, dict) and r.get("id")]

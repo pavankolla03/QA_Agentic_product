@@ -12,9 +12,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import func, select
 

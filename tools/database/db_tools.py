@@ -102,7 +102,7 @@ class DbQueryTool(Tool):
             with engine.connect() as conn:
                 result = conn.execute(text(cleaned), params or {})
                 columns = list(result.keys())
-                rows = [dict(zip(columns, row)) for row in result.fetchmany(max_rows)]
+                rows = [dict(zip(columns, row, strict=False)) for row in result.fetchmany(max_rows)]
         except SQLAlchemyError as exc:
             return ToolResult.failure(f"query failed: {str(exc)[:400]}")
         finally:

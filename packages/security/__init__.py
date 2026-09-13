@@ -1,10 +1,10 @@
 """Security primitives: redaction, workspace confinement, command allowlist, RBAC."""
 
 from packages.security.guard import (  # noqa: F401
+    RBAC,
     CommandGuard,
     GitGuard,
     PolicyViolation,
-    RBAC,
     WorkspaceGuard,
     get_rbac,
 )

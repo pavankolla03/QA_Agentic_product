@@ -12,14 +12,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents.base import AgentContext, ApprovalRequired, BaseAgent, json_block
+from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import (
     AgentName,
     ApprovalKind,
     Capability,
     Priority,
     RiskLevel,
-    RunMode,
     TestLayer,
 )
 from packages.aiqa_types.models import FeatureSpec, GherkinStep, Scenario, TestPlan

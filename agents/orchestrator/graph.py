@@ -17,12 +17,11 @@ Control flow:
 from __future__ import annotations
 
 import logging
-import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from agents.base import AgentContext, BaseAgent
-from packages.agent_protocol import ApprovalRequired
 from agents.code_generation.agent import CodeGenerationAgent
 from agents.execution.agent import CommitAgent, ExecutionAgent
 from agents.exploration.agent import ExplorationAgent
@@ -33,7 +32,8 @@ from agents.requirement.agent import RequirementAgent
 from agents.self_healing.agent import SelfHealingAgent
 from agents.standards.agent import StandardsAgent
 from agents.test_design.agent import TestDesignAgent
-from packages.aiqa_types.enums import AgentName, AgentStatus, RunMode, RunStatus, Severity
+from packages.agent_protocol import ApprovalRequired
+from packages.aiqa_types.enums import AgentName, RunMode, RunStatus
 
 log = logging.getLogger("aiqa.orchestrator")
 
@@ -78,8 +78,8 @@ def _after_standards(ctx: AgentContext) -> str:
         ctx.warn(
             f"{report.error_count} standards error(s) — a human must acknowledge them before the files are written"
         )
-    if ctx.mode == RunMode.GENERATE:
-        return "reporting"
+    # GENERATE still visits `execution`: that node owns applying the approved
+    # diff to the workspace, and stops itself before running the suite.
     return "execution"
 
 
@@ -144,7 +144,7 @@ class Orchestrator:
             return ["requirement", "repository", "exploration", "test_design", "reporting"]
         if mode == RunMode.GENERATE:
             return ["requirement", "repository", "exploration", "test_design",
-                    "code_generation", "standards", "reporting"]
+                    "code_generation", "standards", "execution", "reporting"]
         if mode == RunMode.EXECUTE_ONLY:
             return ["repository", "execution", "failure_analysis", "reporting"]
         if mode == RunMode.HEAL_ONLY:

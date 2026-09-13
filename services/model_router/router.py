@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from configs.settings import Settings, get_settings, load_model_config
 from packages.aiqa_types.enums import AgentName, Capability

@@ -12,16 +12,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import select
 
-from configs.settings import get_settings, load_project_standards
 from agents.base import AgentContext
 from agents.orchestrator.graph import GraphResult, Orchestrator
+from configs.settings import get_settings, load_project_standards
 from packages.aiqa_types.enums import (
-    ApprovalKind,
     ApprovalStatus,
     AuditAction,
     RunMode,
@@ -39,7 +39,6 @@ from packages.aiqa_types.models import (
     RepoProfile,
     Requirement,
     RunEvent,
-    RunReport,
     RunRequest,
     StandardsReport,
     TestPlan,

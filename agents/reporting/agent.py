@@ -12,7 +12,7 @@ import html
 from typing import Any
 
 from agents.base import AgentContext, BaseAgent
-from packages.aiqa_types.enums import AgentName, Capability, RunStatus, TestStatus
+from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import RunReport
 
 SYSTEM = """You are writing the narrative summary of an automated QA run for a QA lead.
@@ -72,12 +72,11 @@ class ReportingAgent(BaseAgent):
 
     # ------------------------------------------------------------------ #
     def _persist_artifact(self, ctx: AgentContext, report: RunReport) -> None:
-        from pathlib import Path
 
         from configs.settings import get_settings
+        from packages.aiqa_types.models import new_id
         from services.observability.db import session_scope
         from services.observability.models import ArtifactRow
-        from packages.aiqa_types.models import new_id
 
         try:
             directory = get_settings().artifacts_dir / ctx.run_id

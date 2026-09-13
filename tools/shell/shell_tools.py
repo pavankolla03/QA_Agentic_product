@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from packages.aiqa_types.enums import ToolCategory
-from packages.security.guard import CommandGuard, PolicyViolation, WorkspaceGuard
+from packages.security.guard import CommandGuard, WorkspaceGuard
 from packages.security.redaction import redact
 from tools.base import Tool, ToolResult
 

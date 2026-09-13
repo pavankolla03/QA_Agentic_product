@@ -12,8 +12,9 @@ import abc
 import json
 import re
 import time
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Sequence
+from typing import Any
 
 from packages.aiqa_types.enums import Role
 from packages.aiqa_types.models import TokenUsage

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agents.base import AgentContext, BaseAgent, json_block
+from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import AcceptanceCriterion, Requirement
 from tools.jira.jira_tools import ISSUE_KEY_RE

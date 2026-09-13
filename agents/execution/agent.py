@@ -12,8 +12,6 @@ Two ordering decisions that matter:
 
 from __future__ import annotations
 
-from typing import Any
-
 from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import (
     AgentName,
@@ -35,8 +33,8 @@ class ExecutionAgent(BaseAgent):
         return 0.78
 
     def skip_reason(self, ctx: AgentContext) -> str:
-        if ctx.mode in (RunMode.PLAN_ONLY, RunMode.GENERATE):
-            return f"mode={ctx.mode.value} — generation only, not executing"
+        if ctx.mode == RunMode.PLAN_ONLY:
+            return "mode=plan_only — nothing to apply or execute"
         return ""
 
     async def run(self, ctx: AgentContext) -> None:
@@ -44,6 +42,12 @@ class ExecutionAgent(BaseAgent):
         if ctx.code_bundle and ctx.code_bundle.changes and not ctx.metadata.get("changes_applied"):
             self._request_write_approval(ctx)
             self._apply(ctx)
+
+        # `generate` means "write the tests, don't run them" — the files still
+        # have to land, otherwise the mode produces nothing the engineer can use.
+        if ctx.mode == RunMode.GENERATE:
+            ctx.note("generate mode: files written, skipping test execution")
+            return
 
         # --- 2. Run the suite ------------------------------------------- #
         filter_expr, tags = self._selection(ctx)
@@ -192,9 +196,10 @@ class ExecutionAgent(BaseAgent):
 
     def _record_flakiness(self, ctx: AgentContext, execution: ExecutionResult) -> None:
         """Maintain the per-test flakiness ledger that drives quarantine advice."""
+        from sqlalchemy import select
+
         from services.observability.db import session_scope
         from services.observability.models import FlakyTestRow
-        from sqlalchemy import select
 
         if not execution.results:
             return

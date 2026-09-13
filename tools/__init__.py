@@ -6,7 +6,7 @@ restrict the surface area (for example: no Git, no DB) by passing ``exclude``.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from tools.api.api_tools import API_TOOLS
 from tools.base import Tool, ToolContext, ToolRegistry, ToolResult

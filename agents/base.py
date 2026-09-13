@@ -11,9 +11,11 @@ from __future__ import annotations
 import abc
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
 
+from packages.agent_protocol import AgentFailure, ApprovalRequired  # noqa: F401
 from packages.aiqa_types.enums import (
     AgentName,
     ApprovalKind,
@@ -36,7 +38,6 @@ from packages.aiqa_types.models import (
     StandardsReport,
     TestPlan,
 )
-from packages.agent_protocol import AgentFailure, ApprovalRequired  # noqa: F401
 from packages.llm_provider.base import ChatMessage, LLMResponse
 from services.model_router.router import ModelRouter, RouterBudget
 from tools.base import ToolRegistry, ToolResult

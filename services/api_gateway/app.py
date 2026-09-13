@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +16,6 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
-    Depends,
     FastAPI,
     HTTPException,
     Query,
@@ -31,8 +29,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, delete, desc, func, select
 
-from configs.settings import get_settings, load_project_standards
 from agents.orchestrator.graph import describe_agents
+from configs.settings import get_settings, load_project_standards
 from packages.aiqa_types.enums import ApprovalStatus, AuditAction, RunStatus
 from packages.aiqa_types.models import Project, RunRequest, new_id
 from packages.security.guard import PolicyViolation
@@ -50,7 +48,6 @@ from services.api_gateway.schemas import (
     ApprovalDecision,
     ApprovalOut,
     HealthOut,
-    IndexRequest,
     LintRequest,
     ProjectCreate,
     ProjectOut,

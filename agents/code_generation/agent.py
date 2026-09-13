@@ -30,7 +30,7 @@ from packages.aiqa_types.enums import (
     Capability,
     ChangeType,
 )
-from packages.aiqa_types.models import CodeBundle, FeatureSpec, FileChange, Scenario, TestPlan
+from packages.aiqa_types.models import CodeBundle, FileChange, TestPlan
 from tools.filesystem.fs_tools import make_diff
 
 PAGE_SYSTEM = """You write Page Object classes for an existing QA automation repository.
@@ -245,7 +245,7 @@ class CodeGenerationAgent(BaseAgent):
             )
 
         header = [
-            f"import {{ Page, expect }} from '@playwright/test';",
+            "import { Page, expect } from '@playwright/test';",
         ]
         class_decl = f"export class {class_name}"
         if base:
@@ -256,7 +256,7 @@ class CodeGenerationAgent(BaseAgent):
             f"  readonly path = '{route}';",
             "",
             *getters,
-            f"  async fillForm(data: Record<string, string | number>): Promise<void> {{",
+            "  async fillForm(data: Record<string, string | number>): Promise<void> {",
             *(fill_lines or ["    // TODO(aiqa): map form fields once locators are verified."]),
             "  }",
             "",
@@ -573,7 +573,7 @@ def _relative_import(from_dir: str, to_dir: str) -> str:
     from_parts = [p for p in from_dir.strip("/").split("/") if p]
     to_parts = [p for p in to_dir.strip("/").split("/") if p]
     common = 0
-    for a, b in zip(from_parts, to_parts):
+    for a, b in zip(from_parts, to_parts, strict=False):
         if a != b:
             break
         common += 1

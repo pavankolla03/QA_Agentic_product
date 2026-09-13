@@ -34,9 +34,9 @@ cd apps/vscode-extension && npm run compile
 | 10 | Notification service (Slack/Teams) | DONE | Slack blocks + Teams adaptive cards, redacted, wired into Reporting agent |
 | 11 | VS Code extension | DONE | 21 commands, 4 tree views, chat webview, diff review, SecretStorage keys, compiles clean |
 | 12 | Control plane web UI | DONE | 6-tab dashboard, approve/reject in browser, cost charts, audit — verified in a real browser |
-| 13 | Infrastructure: docker-compose, CI | TODO | |
+| 13 | Infrastructure: docker-compose, CI | DONE | non-root Dockerfile w/ Playwright, compose (Postgres/Redis/Ollama profile), 2 CI workflows |
 | 14 | Tests + sample target repo fixture | DONE | 159 tests green (119 unit / 24 integration / 16 e2e) + selfcheck |
-| 15 | Docs + final polish | TODO | |
+| 15 | Docs + final polish | DONE | README, ARCHITECTURE, GETTING_STARTED, docs index; ruff clean |
 
 ## Verified end-to-end (offline, no credentials)
 `python -m scripts.selfcheck` passes: 2 approval gates (test_plan -> code_write), durable resume,
@@ -44,4 +44,10 @@ cd apps/vscode-extension && npm run compile
 6 audit entries, secret redaction + workspace confinement + path-escape all blocked.
 
 ## Next action
-Phase 13: infrastructure (docker-compose, Dockerfiles, CI workflows), then Phase 15 docs.
+**BUILD COMPLETE.** All 16 phases DONE. 160 tests green, selfcheck green, ruff clean, extension compiles.
+
+Possible next increments (not required by the spec):
+- Real Appium execution (mobile is architecture-only today)
+- pgvector/Chroma backend for the knowledge index (currently JSON embeddings + hybrid scoring)
+- Cypress / WebdriverIO / pytest-bdd code-generation templates
+- SSO + per-project RBAC scoping beyond the current org-level roles

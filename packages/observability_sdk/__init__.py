@@ -45,6 +45,7 @@ class NullTracker:
 
     def tool_span(self, category: Any, tool: str, arguments: Any = "") -> Any:
         import contextlib
+
         from packages.aiqa_types.models import ToolCallTrace
 
         @contextlib.contextmanager
@@ -55,6 +56,7 @@ class NullTracker:
 
     def agent_span(self, agent: Any, input_summary: str = "", progress: float | None = None) -> Any:
         import contextlib
+
         from packages.aiqa_types.models import AgentTrace
 
         @contextlib.contextmanager

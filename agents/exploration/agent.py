@@ -18,7 +18,6 @@ from urllib.parse import urlparse
 from agents.base import AgentContext, BaseAgent, json_block
 from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import (
-    DiscoveredElement,
     DiscoveredWorkflow,
     ExplorationResult,
     PageSnapshot,

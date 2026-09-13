@@ -11,7 +11,6 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -33,7 +32,9 @@ run_app = typer.Typer(help="Create and inspect runs.", no_args_is_help=True)
 app.add_typer(project_app, name="project")
 app.add_typer(run_app, name="run")
 
-console = Console()
+# When output is piped (scripts, CI), Rich has no terminal width to measure and
+# falls back to 80 columns — which silently truncates ids that users need to copy.
+console = Console(width=None if sys.stdout.isatty() else 200)
 
 
 def _bootstrap() -> None:
@@ -194,7 +195,10 @@ def project_list() -> None:
     if not rows:
         console.print("[dim]no projects registered — use `aiqa project add`[/dim]")
         return
-    table = Table("id", "name", "repository", "app url", "runner")
+    table = Table(box=None, pad_edge=False)
+    table.add_column("id", no_wrap=True, overflow="fold")
+    for column in ("name", "repository", "app url", "runner"):
+        table.add_column(column, overflow="fold")
     for row in rows:
         table.add_row(row.id, row.name, row.repository_path, row.base_url or "—", row.framework)
     console.print(table)
@@ -204,7 +208,6 @@ def project_list() -> None:
 def project_index(project_id: str = typer.Argument(..., help="Project id")) -> None:
     """Index a repository so agents learn its conventions."""
     _bootstrap()
-    from sqlalchemy import select
 
     from services.knowledge_service.indexer import RepositoryIndexer
     from services.model_router.router import ModelRouter
@@ -286,10 +289,10 @@ def run_start(
 ) -> None:
     """Create and drive a run to completion."""
     _bootstrap()
+
     from packages.aiqa_types.enums import RunMode
     from packages.aiqa_types.models import RunRequest
     from services.agent_engine.engine import AgentEngine
-    from sqlalchemy import select
     from services.observability.db import session_scope
     from services.observability.models import RunRow
 
@@ -379,11 +382,14 @@ def run_list(limit: int = typer.Option(20, help="How many runs to show")) -> Non
     if not rows:
         console.print("[dim]no runs yet[/dim]")
         return
-    table = Table("id", "status", "instruction", "tests", "cost", "when")
+    table = Table(box=None, pad_edge=False)
+    table.add_column("id", no_wrap=True, overflow="fold")
+    for column in ("status", "instruction", "tests", "cost", "when"):
+        table.add_column(column, overflow="fold")
     for row in rows:
         tests = f"{row.tests_passed}/{row.tests_total}" if row.tests_total else "—"
         table.add_row(
-            row.id[:20], row.status, row.instruction[:44], tests,
+            row.id, row.status, row.instruction[:44], tests,
             f"${row.total_cost_usd:.4f}", row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else "",
         )
     console.print(table)

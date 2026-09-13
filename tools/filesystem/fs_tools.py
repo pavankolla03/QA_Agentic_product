@@ -11,8 +11,9 @@ import difflib
 import fnmatch
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from packages.aiqa_types.enums import ToolCategory
 from packages.security.guard import PolicyViolation, WorkspaceGuard

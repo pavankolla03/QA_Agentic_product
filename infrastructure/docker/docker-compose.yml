@@ -1,0 +1,115 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AI QA Engineer — local / small-team deployment.
+#
+#   docker compose up -d                     # control plane + Postgres + Redis
+#   docker compose --profile local-llm up -d # also run Ollama (no API keys needed)
+#
+# Mount the QA repositories you want the agents to work on under /workspaces.
+# ─────────────────────────────────────────────────────────────────────────────
+name: aiqa
+
+services:
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    image: aiqa/control-plane:0.1.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      AIQA_ENV: production
+      AIQA_HOST: 0.0.0.0
+      AIQA_PORT: 8080
+      AIQA_DATABASE_URL: postgresql+psycopg://aiqa:${POSTGRES_PASSWORD:-aiqa}@postgres:5432/aiqa
+      AIQA_REDIS_URL: redis://redis:6379/0
+      # Change these before exposing the service to anyone else.
+      AIQA_SECRET_KEY: ${AIQA_SECRET_KEY:?set AIQA_SECRET_KEY in .env}
+      AIQA_BOOTSTRAP_API_KEY: ${AIQA_BOOTSTRAP_API_KEY:?set AIQA_BOOTSTRAP_API_KEY in .env}
+      # Providers — all optional; with none set the platform runs offline.
+      AIQA_DEFAULT_PROVIDER: ${AIQA_DEFAULT_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Cost governance
+      AIQA_DAILY_COST_LIMIT_USD: ${AIQA_DAILY_COST_LIMIT_USD:-25}
+      AIQA_MONTHLY_COST_LIMIT_USD: ${AIQA_MONTHLY_COST_LIMIT_USD:-500}
+      AIQA_PER_RUN_COST_LIMIT_USD: ${AIQA_PER_RUN_COST_LIMIT_USD:-2}
+      # Notifications
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL:-}
+      # Jira
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+    ports:
+      - "${AIQA_PORT:-8080}:8080"
+    volumes:
+      # The QA repositories the agents may read and write.
+      - ${WORKSPACES_DIR:-./workspaces}:/workspaces
+      - artifacts:/app/artifacts
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health',timeout=4).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aiqa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiqa}
+      POSTGRES_DB: aiqa
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiqa -d aiqa"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Not published: only the control plane needs it.
+    expose:
+      - "5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redisdata:/data
+    expose:
+      - "6379"
+
+  # Local, free, private inference. Nothing leaves the machine.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-llm"]
+    restart: unless-stopped
+    volumes:
+      - ollamadata:/root/.ollama
+    ports:
+      - "11434:11434"
+    # Uncomment to use an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  pgdata:
+  redisdata:
+  ollamadata:
+  artifacts:

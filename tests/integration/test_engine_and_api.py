@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from packages.aiqa_types.enums import RunMode, RunStatus
 from packages.aiqa_types.models import RunRequest
 
@@ -371,3 +369,26 @@ def test_agents_and_tools_are_introspectable(api_client) -> None:
     assert tools["count"] >= 25
     names = {t["name"] for t in tools["tools"]}
     assert {"fs.write_file", "git.commit", "playwright.run_tests", "db.query"} <= names
+
+
+async def test_generate_mode_writes_files_but_does_not_execute(engine, project, org_user, repo_copy) -> None:
+    """`generate` must produce usable files on disk; only the test *run* is skipped."""
+    org_id, user_id = org_user
+    run_id = engine.create_run(
+        RunRequest(project_id=project.id, instruction="Automate resident registration",
+                   mode=RunMode.GENERATE, auto_approve=True),
+        user_id=user_id, org_id=org_id,
+    )
+    result = await engine.run_to_completion(run_id, auto_approve=True)
+    assert result.status == RunStatus.SUCCEEDED
+
+    written = [p for p in repo_copy.rglob("*resident*") if p.is_file()]
+    assert written, "generate mode produced no files"
+
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+
+    with session_scope() as session:
+        row = session.get(RunRow, run_id)
+        assert row.code_bundle is not None
+        assert row.tests_total == 0, "generate mode must not execute the suite"

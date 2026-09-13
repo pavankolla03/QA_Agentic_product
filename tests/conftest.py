@@ -11,11 +11,10 @@ Two rules the whole suite depends on:
 
 from __future__ import annotations
 
-import os
 import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -80,7 +79,7 @@ def org_user(isolated_env: Path) -> tuple[str, str]:
 
 
 @pytest.fixture
-def project(org_user: tuple[str, str], repo_copy: Path) -> "Project":  # noqa: F821
+def project(org_user: tuple[str, str], repo_copy: Path) -> Project:  # noqa: F821
     from packages.aiqa_types.models import Project, new_id
     from services.observability.db import session_scope
     from services.observability.models import ProjectRow
@@ -104,21 +103,21 @@ def project(org_user: tuple[str, str], repo_copy: Path) -> "Project":  # noqa: F
 
 
 @pytest.fixture
-def offline_router() -> "ModelRouter":  # noqa: F821
+def offline_router() -> ModelRouter:  # noqa: F821
     from services.model_router.router import ModelRouter
 
     return ModelRouter(offline=True)
 
 
 @pytest.fixture
-def engine() -> "AgentEngine":  # noqa: F821
+def engine() -> AgentEngine:  # noqa: F821
     from services.agent_engine.engine import AgentEngine
 
     return AgentEngine(offline=True)
 
 
 @pytest.fixture
-def tool_ctx(repo_copy: Path) -> "ToolContext":  # noqa: F821
+def tool_ctx(repo_copy: Path) -> ToolContext:  # noqa: F821
     from packages.observability_sdk import NullTracker
     from tools import ToolContext
 
@@ -132,14 +131,14 @@ def tool_ctx(repo_copy: Path) -> "ToolContext":  # noqa: F821
 
 
 @pytest.fixture
-def registry(tool_ctx: "ToolContext") -> "ToolRegistry":  # noqa: F821
+def registry(tool_ctx: ToolContext) -> ToolRegistry:  # noqa: F821
     from tools import build_registry
 
     return build_registry(tool_ctx)
 
 
 @pytest.fixture
-def agent_ctx(project: "Project", repo_copy: Path, offline_router, registry) -> "AgentContext":  # noqa: F821
+def agent_ctx(project: Project, repo_copy: Path, offline_router, registry) -> AgentContext:  # noqa: F821
     """A ready-to-use AgentContext wired to the offline router."""
     from agents.base import AgentContext
     from configs.settings import load_project_standards
