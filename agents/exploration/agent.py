@@ -1,27 +1,40 @@
-"""Application Exploration Agent.
+"""Application Exploration Agent — crawl once, reuse forever.
 
-Drives a real browser over the application under test to harvest **verified**
-locators. This matters more than any prompt-engineering trick: a test written
-against a locator that was observed in the live DOM passes; one written against a
-locator the model imagined does not.
+The naive design re-crawls the application for every scenario. Designing 500
+scenarios against one app should explore it *once*.
 
-When no application is reachable the agent degrades honestly — it records that
-locators are unverified, and the Code Generation Agent emits clearly-marked
-TODO locators instead of plausible-looking fiction.
+This agent consults the persistent :class:`ApplicationMap` first and only visits
+routes the map cannot vouch for — never seen, DOM changed, locators failed,
+confidence decayed, TTL expired, or the app version moved. Everything else is
+answered from cache at zero cost. Execution results are fed back so a locator
+that keeps working gains confidence and one that breaks loses it.
+
+When no application is reachable the agent degrades honestly: it records that
+locators are unverified so Code Generation emits clearly-marked TODOs rather
+than plausible fiction.
 """
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
-from urllib.parse import urlparse
 
 from agents.base import AgentContext, BaseAgent, json_block
 from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import (
+    DiscoveredElement,
     DiscoveredWorkflow,
     ExplorationResult,
     PageSnapshot,
     WorkflowStep,
+)
+from services.knowledge_service.application_map import (
+    ApplicationMap,
+    LocatorKnowledge,
+    PageKnowledge,
+    detect_components,
+    dom_hash,
+    route_of,
 )
 
 SYSTEM = """You identify end-to-end user workflows from a structural map of an application's pages.
@@ -40,114 +53,263 @@ Never invent a locator."""
 
 class ExplorationAgent(BaseAgent):
     name = AgentName.EXPLORATION
-    capability = Capability.FAST
-    description = "Crawls the application under test to capture verified locators and user workflows."
-    optional = True          # a run can still produce value without a live app
+    capability = Capability.CHEAP     # the browser does the work; the model only picks targets
+    description = "Crawls the application under test, caching pages and locators in the Application Map."
+    optional = True                   # a run can still produce value without a live app
 
     def progress(self, ctx: AgentContext) -> float:
         return 0.3
 
     def skip_reason(self, ctx: AgentContext) -> str:
         if not (ctx.project.base_url or ctx.metadata.get("target_url")):
-            return "no base_url configured for this project — skipping live exploration"
+            return "no base_url configured for this project - skipping live exploration"
         return ""
 
     async def run(self, ctx: AgentContext) -> None:
         base_url = ctx.metadata.get("target_url") or ctx.project.base_url or ""
+        root = ctx.project_root
 
-        # Cheap reachability probe first: a 5-second failure beats a 60-second one.
-        health = self.tool(ctx, "api.health", url=base_url)
-        if health.ok and not (health.data or {}).get("reachable", False):
-            ctx.warn(
-                f"application at {base_url} is not reachable "
-                f"({(health.data or {}).get('reason', 'unknown')}). Locators will be unverified."
+        app_map = ApplicationMap.load_or_new(root, project_id=ctx.project.id, base_url=base_url)
+        ctx.application_map = app_map
+
+        candidate_routes = self._candidate_routes(ctx, app_map)
+        failed_locators = set(ctx.metadata.get("failed_locators") or [])
+
+        to_explore, cached = app_map.plan_exploration(
+            candidate_routes,
+            app_version=ctx.metadata.get("app_version", ""),
+            failed_locators=failed_locators,
+        )
+
+        if cached:
+            ctx.note(
+                f"application map hit for {len(cached)} route(s) - skipping crawl: "
+                + "; ".join(f"{route} ({reason})" for route, reason in list(cached.items())[:4])
             )
-            ctx.exploration = ExplorationResult(
-                project_id=ctx.project.id, base_url=base_url, simulated=True,
-                notes="Application unreachable; no locators verified.",
+            saved = sum(
+                len(app_map.page(route).elements) if app_map.page(route) else 0 for route in cached
             )
-            ctx.metadata["locators_verified"] = False
+            if hasattr(ctx.budget, "record_saving"):
+                ctx.budget.record_saving(saved * 40)   # ~40 tokens per element description
+
+        if not to_explore:
+            ctx.exploration = self._result_from_map(ctx, app_map, base_url, crawled=[])
+            ctx.metadata["locators_verified"] = bool(app_map.catalog())
+            ctx.metadata["locator_catalog"] = app_map.catalog()
+            ctx.note(
+                f"no crawl needed - {len(app_map.pages)} page(s) already known "
+                f"({len(ctx.metadata['locator_catalog'])} trusted locators)"
+            )
+            self._finish(ctx, app_map)
             return
 
-        paths = _candidate_paths(ctx)
+        # ---- reachability probe before spending time on a browser ------- #
+        health = self.tool(ctx, "api.health", url=base_url)
+        if health.ok and not (health.data or {}).get("reachable", False):
+            reason = (health.data or {}).get("reason", "unknown")
+            ctx.warn(f"application at {base_url} is not reachable ({reason}). Locators will be unverified.")
+            ctx.exploration = self._result_from_map(
+                ctx, app_map, base_url, crawled=[], notes="Application unreachable; no locators verified."
+            )
+            catalog = app_map.catalog()
+            ctx.metadata["locator_catalog"] = catalog
+            ctx.metadata["locators_verified"] = bool(catalog)
+            if catalog:
+                ctx.note(f"falling back to {len(catalog)} cached locator(s) from a previous crawl")
+            self._finish(ctx, app_map)
+            return
+
+        # ---- crawl only what the map could not vouch for ---------------- #
+        ctx.note(f"crawling {len(to_explore)} route(s): {', '.join(to_explore[:6])}")
         result = self.tool(
             ctx, "playwright.explore",
-            base_url=base_url, paths=paths, max_pages=ctx.metadata.get("max_explore_pages", 6),
+            base_url=base_url, paths=to_explore,
+            max_pages=min(len(to_explore) + 2, ctx.metadata.get("max_explore_pages", 8)),
         )
         if not result.ok:
             ctx.warn(f"exploration failed: {result.error[:250]}")
-            ctx.exploration = ExplorationResult(
-                project_id=ctx.project.id, base_url=base_url, simulated=True, notes=result.error[:500]
-            )
-            ctx.metadata["locators_verified"] = False
+            ctx.exploration = self._result_from_map(ctx, app_map, base_url, crawled=[], notes=result.error[:500])
+            ctx.metadata["locator_catalog"] = app_map.catalog()
+            ctx.metadata["locators_verified"] = bool(ctx.metadata["locator_catalog"])
+            self._finish(ctx, app_map)
             return
 
         data = result.data or {}
         snapshots = [PageSnapshot(**snap) for snap in data.get("snapshots", [])]
-        exploration = ExplorationResult(
-            project_id=ctx.project.id,
-            base_url=base_url,
-            snapshots=snapshots,
-            unreachable=data.get("unreachable", []),
-            simulated=bool(data.get("simulated", False)),
-            notes="; ".join(data.get("errors", [])[:3]),
-        )
+        simulated = bool(data.get("simulated", False))
 
-        total_elements = sum(len(s.elements) for s in snapshots)
-        verified = [
-            e for s in snapshots for e in s.elements if e.recommended_locator and e.confidence >= 0.7
-        ]
-        ctx.metadata["locators_verified"] = bool(verified)
-        ctx.metadata["locator_catalog"] = _locator_catalog(snapshots)
+        for snapshot in snapshots:
+            app_map.put_page(self._to_page_knowledge(snapshot, simulated=simulated))
+        app_map.unreachable = data.get("unreachable", [])[:20]
 
-        if exploration.simulated:
+        # ---- component registry ---------------------------------------- #
+        pages = [PageKnowledge(**raw) for raw in app_map.pages.values()]
+        app_map.components = detect_components(pages)
+        shared = [name for name, entry in app_map.components.items() if entry.get("shared")]
+        if shared:
+            ctx.note(f"reusable components detected across pages: {', '.join(shared[:8])}")
+
+        catalog = app_map.catalog()
+        ctx.metadata["locator_catalog"] = catalog
+        ctx.metadata["locators_verified"] = bool(catalog)
+        ctx.metadata["components"] = app_map.components
+
+        if simulated:
             ctx.warn(
-                "exploration used the HTTP fallback (no browser). Locators come from static HTML — "
+                "exploration used the HTTP fallback (no browser). Locators come from static HTML - "
                 "verify any JavaScript-rendered elements."
             )
 
-        # Ask the model to assemble journeys from the observed elements.
+        exploration = self._result_from_map(
+            ctx, app_map, base_url, crawled=[s.url for s in snapshots], simulated=simulated
+        )
         if snapshots:
             exploration.workflows = await self._infer_workflows(ctx, snapshots)
-
         ctx.exploration = exploration
+
         ctx.note(
-            f"explored {len(snapshots)} page(s), {total_elements} element(s), "
-            f"{len(verified)} high-confidence locator(s), {len(exploration.workflows)} workflow(s)"
+            f"crawled {len(snapshots)} page(s); map now holds {len(app_map.pages)} route(s), "
+            f"{len(catalog)} trusted locator(s), {len(app_map.components)} component(s)"
         )
+        self._finish(ctx, app_map)
+
+    # ------------------------------------------------------------------ #
+    def _finish(self, ctx: AgentContext, app_map: ApplicationMap) -> None:
+        app_map.save(ctx.project_root)
+        # Only a JSON-safe summary belongs in metadata (it is persisted).
+        ctx.metadata["application_map_stats"] = app_map.stats()
         if ctx.tracker:
             for trace in getattr(ctx.tracker, "agent_traces", []):
                 if trace.agent == self.name and not trace.output_summary:
-                    trace.output_summary = f"{len(snapshots)} pages, {len(verified)} verified locators"
+                    stats = app_map.stats()
+                    trace.output_summary = (
+                        f"{stats['pages']} pages known, {stats['trusted_locators']} trusted locators"
+                    )
+
+    @staticmethod
+    def _to_page_knowledge(snapshot: PageSnapshot, simulated: bool) -> PageKnowledge:
+        elements = [
+            asdict(
+                LocatorKnowledge(
+                    name=element.name or element.placeholder or element.test_id or "",
+                    role=element.role,
+                    locator=element.recommended_locator,
+                    strategy=element.locator_strategy,
+                    confidence=element.confidence,
+                    required=element.required,
+                    input_type=element.input_type,
+                    alternatives=element.alternatives[:3],
+                    source="http_probe" if simulated else "exploration",
+                )
+            )
+            for element in snapshot.elements
+            if element.recommended_locator
+        ]
+        return PageKnowledge(
+            route=snapshot.route_pattern or route_of(snapshot.url),
+            url=snapshot.url,
+            title=snapshot.title,
+            dom_hash=dom_hash([e for e in elements]),
+            elements=elements,
+            forms=snapshot.forms[:8],
+            navigations=snapshot.navigations[:40],
+            screenshot_path=snapshot.screenshot_path,
+            simulated=simulated,
+        )
+
+    def _result_from_map(
+        self,
+        ctx: AgentContext,
+        app_map: ApplicationMap,
+        base_url: str,
+        crawled: list[str],
+        notes: str = "",
+        simulated: bool = False,
+    ) -> ExplorationResult:
+        """Present the map as an ExplorationResult so downstream agents are unchanged."""
+        snapshots: list[PageSnapshot] = []
+        for raw in app_map.pages.values():
+            page = PageKnowledge(**raw)
+            snapshots.append(
+                PageSnapshot(
+                    url=page.url,
+                    title=page.title,
+                    route_pattern=page.route,
+                    elements=[
+                        DiscoveredElement(
+                            role=locator.role, name=locator.name, tag="",
+                            test_id=None, label=None, placeholder=None, text=None,
+                            input_type=locator.input_type, required=locator.required,
+                            recommended_locator=locator.locator,
+                            locator_strategy=locator.strategy,
+                            confidence=locator.confidence,
+                            alternatives=locator.alternatives,
+                        )
+                        for locator in page.locators()
+                    ],
+                    forms=page.forms,
+                    navigations=page.navigations,
+                    screenshot_path=page.screenshot_path,
+                    dom_hash=page.dom_hash,
+                )
+            )
+        return ExplorationResult(
+            project_id=ctx.project.id,
+            base_url=base_url,
+            snapshots=snapshots,
+            unreachable=app_map.unreachable,
+            simulated=simulated,
+            notes=notes or f"{len(crawled)} route(s) crawled this run; {len(snapshots)} known in total",
+        )
+
+    # ------------------------------------------------------------------ #
+    def _candidate_routes(self, ctx: AgentContext, app_map: ApplicationMap) -> list[str]:
+        """Guess likely entry points from the feature name, plus what we already know."""
+        routes: list[str] = ["/"]
+        title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
+        words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
+        for word in words[:3]:
+            routes.extend([f"/{word}", f"/{word}s", f"/{word}/new"])
+        for common in ("/login", "/dashboard"):
+            routes.append(common)
+        # Known routes are cheap to include: the map answers them without a crawl.
+        routes.extend(app_map.known_routes())
+
+        seen: set[str] = set()
+        unique: list[str] = []
+        for route in routes:
+            if route not in seen:
+                seen.add(route)
+                unique.append(route)
+        return unique[:14]
 
     # ------------------------------------------------------------------ #
     async def _infer_workflows(self, ctx: AgentContext, snapshots: list[PageSnapshot]) -> list[DiscoveredWorkflow]:
         feature = ctx.requirement.title if ctx.requirement else ctx.instruction
-        page_map: list[dict[str, Any]] = []
-        for snapshot in snapshots[:6]:
-            page_map.append(
-                {
-                    "url": snapshot.url,
-                    "route": snapshot.route_pattern,
-                    "title": snapshot.title,
-                    "forms": snapshot.forms[:4],
-                    "elements": [
-                        {
-                            "role": element.role,
-                            "name": element.name,
-                            "required": element.required,
-                            "input_type": element.input_type,
-                            "recommended_locator": element.recommended_locator,
-                        }
-                        for element in snapshot.elements[:40]
-                        if element.recommended_locator
-                    ],
-                }
-            )
+        page_map: list[dict[str, Any]] = [
+            {
+                "url": snapshot.url,
+                "route": snapshot.route_pattern,
+                "title": snapshot.title,
+                "forms": snapshot.forms[:4],
+                "elements": [
+                    {
+                        "role": element.role,
+                        "name": element.name,
+                        "required": element.required,
+                        "input_type": element.input_type,
+                        "recommended_locator": element.recommended_locator,
+                    }
+                    for element in snapshot.elements[:40]
+                    if element.recommended_locator
+                ],
+            }
+            for snapshot in snapshots[:6]
+        ]
 
         user = (
             f"Feature to automate: {feature}\n\n"
-            f"Application map:\n{json_block(page_map, limit=14000)}\n\n"
+            f"Application map:\n{json_block(page_map, limit=12000)}\n\n"
             "Identify the workflows worth automating for this feature."
         )
         raw = await self.ask_json(
@@ -170,9 +332,8 @@ class ExplorationAgent(BaseAgent):
                 if not isinstance(raw_step, dict):
                     continue
                 locator = str(raw_step.get("locator") or "")
-                # Reject hallucinated locators outright.
                 if locator and locator not in valid_locators:
-                    locator = ""
+                    locator = ""          # reject hallucinated locators outright
                 steps.append(
                     WorkflowStep(
                         order=int(raw_step.get("order", index) or index),
@@ -197,47 +358,6 @@ class ExplorationAgent(BaseAgent):
 
 
 # --------------------------------------------------------------------------- #
-def _candidate_paths(ctx: AgentContext) -> list[str]:
-    """Guess likely entry points from the feature name to keep the crawl focused."""
-    paths = ["/"]
-    title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
-    words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
-    for word in words[:3]:
-        paths.extend([f"/{word}", f"/{word}s", f"/{word}/new"])
-    for common in ("/login", "/dashboard"):
-        if common not in paths:
-            paths.append(common)
-    seen: set[str] = set()
-    unique: list[str] = []
-    for path in paths:
-        if path not in seen:
-            seen.add(path)
-            unique.append(path)
-    return unique[:10]
-
-
-def _locator_catalog(snapshots: list[PageSnapshot]) -> list[dict[str, Any]]:
-    """Flat, prompt-friendly list of every verified locator, best first."""
-    catalog: list[dict[str, Any]] = []
-    for snapshot in snapshots:
-        for element in snapshot.elements:
-            if not element.recommended_locator:
-                continue
-            catalog.append(
-                {
-                    "page": snapshot.route_pattern or urlparse(snapshot.url).path or "/",
-                    "name": element.name or element.placeholder or element.test_id or "",
-                    "role": element.role,
-                    "required": element.required,
-                    "locator": element.recommended_locator,
-                    "strategy": element.locator_strategy,
-                    "confidence": element.confidence,
-                }
-            )
-    catalog.sort(key=lambda item: item["confidence"], reverse=True)
-    return catalog[:120]
-
-
 def _fallback_workflows(snapshots: list[PageSnapshot], feature: str) -> list[dict[str, Any]]:
     """Build a workflow from the largest observed form, without a model."""
     best: PageSnapshot | None = None
@@ -277,7 +397,7 @@ def _fallback_workflows(snapshots: list[PageSnapshot], feature: str) -> list[dic
 
     return [
         {
-            "name": f"{feature} — primary journey",
+            "name": f"{feature} - primary journey",
             "description": "Derived from the largest observed form (no model inference available).",
             "entry_url": best.url,
             "confidence": 0.5,

@@ -7,7 +7,7 @@ import pytest
 from packages.aiqa_types.enums import Capability
 from packages.aiqa_types.models import TokenUsage
 from packages.llm_provider import ChatMessage, extract_json
-from services.model_router.router import BudgetExceeded, ModelCandidate, ModelRouter, RouterBudget
+from services.model_router.router import BudgetExceeded, ModelCandidate, ModelRouter, RunBudget
 
 
 # =========================================================================== #
@@ -35,31 +35,50 @@ def test_cached_prompt_tokens_are_discounted() -> None:
 # =========================================================================== #
 # Budget enforcement
 # =========================================================================== #
-def test_budget_blocks_once_the_ceiling_is_reached() -> None:
-    budget = RouterBudget(max_cost_usd=1.0, max_tokens=1000)
+def test_budget_blocks_once_the_cost_ceiling_is_reached() -> None:
+    budget = RunBudget(max_cost_usd=1.0, max_requests=100, max_tokens=100_000)
     budget.check()
-    budget.record(0.99, 500)
+    budget.record(cost=0.99, input_tokens=500, free=False)
     budget.check()
-    budget.record(0.02, 100)
-    with pytest.raises(BudgetExceeded, match="cost limit"):
+    budget.record(cost=0.02, input_tokens=100, free=False)
+    with pytest.raises(BudgetExceeded) as excinfo:
         budget.check()
+    assert excinfo.value.kind == "cost"
 
 
 def test_budget_blocks_on_tokens_too() -> None:
-    budget = RouterBudget(max_cost_usd=100.0, max_tokens=1000)
-    budget.record(0.0, 1200)
-    with pytest.raises(BudgetExceeded, match="token limit"):
+    budget = RunBudget(max_cost_usd=100.0, max_requests=100, max_input_tokens=1000)
+    budget.record(input_tokens=1200)
+    with pytest.raises(BudgetExceeded) as excinfo:
         budget.check()
+    assert excinfo.value.kind == "input_tokens"
+
+
+def test_budget_blocks_on_request_count() -> None:
+    """Free tiers are request-limited, so requests are a first-class ceiling."""
+    budget = RunBudget(max_requests=2, max_cost_usd=100.0)
+    budget.record(input_tokens=10)
+    budget.record(input_tokens=10)
+    with pytest.raises(BudgetExceeded) as excinfo:
+        budget.check()
+    assert excinfo.value.kind == "requests"
+
+
+def test_preflight_refuses_a_call_that_cannot_fit() -> None:
+    budget = RunBudget(max_cost_usd=1.0, max_input_tokens=1000)
+    assert budget.would_exceed(estimated_input=2000) == "input_tokens"
+    assert budget.would_exceed(estimated_input=10, estimated_cost=5.0) == "cost"
+    assert budget.would_exceed(estimated_input=10, estimated_cost=0.01) == ""
 
 
 async def test_router_charges_the_budget(offline_router: ModelRouter) -> None:
-    budget = RouterBudget(max_cost_usd=1.0, max_tokens=100_000)
+    budget = RunBudget(max_cost_usd=1.0, max_tokens=100_000)
     await offline_router.complete(
         [ChatMessage.user("Automate resident registration")],
         capability=Capability.REASONING, task="requirement.analyze", json_mode=True, budget=budget,
     )
-    assert budget.calls == 1
-    assert budget.used_tokens > 0
+    assert budget.requests == 1
+    assert budget.total_tokens > 0
 
 
 # =========================================================================== #
@@ -95,10 +114,22 @@ async def test_traces_are_emitted_for_every_call(offline_router: ModelRouter) ->
     assert traces[0].status == "succeeded"
 
 
-def test_agent_capability_mapping(offline_router: ModelRouter) -> None:
-    assert offline_router.capability_for_agent("code_generation") == Capability.CODING
-    assert offline_router.capability_for_agent("failure_analysis") == Capability.REASONING
-    assert offline_router.capability_for_agent("unknown-agent") == Capability.FAST
+def test_agent_tier_mapping(offline_router: ModelRouter) -> None:
+    """Paid reasoning only where judgement matters; everything else is cheap."""
+    assert offline_router.tier_for(agent="code_generation") == "coding"
+    assert offline_router.tier_for(agent="failure_analysis") == "reasoning"
+    assert offline_router.tier_for(agent="test_design") == "reasoning"
+    assert offline_router.tier_for(agent="reporting") == "cheap"
+    assert offline_router.tier_for(agent="repository") == "cheap"
+    assert offline_router.tier_for(agent="execution") == "cheap"
+    assert offline_router.tier_for(agent="unknown-agent") == "cheap"
+
+
+def test_task_overrides_beat_agent_defaults(offline_router: ModelRouter) -> None:
+    """One agent may mix a paid call and a free one."""
+    assert offline_router.tier_for(task="failure_analysis.triage_bulk", agent="failure_analysis") == "cheap"
+    assert offline_router.tier_for(task="failure_analysis.classify", agent="failure_analysis") == "reasoning"
+    assert offline_router.tier_for(task="standards.semantic", agent="standards") == "cheap"
 
 
 # =========================================================================== #

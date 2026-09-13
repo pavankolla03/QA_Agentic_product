@@ -72,6 +72,14 @@ class AgentContext:
     requirement: Requirement | None = None
     repo_profile: RepoProfile | None = None
     exploration: ExplorationResult | None = None
+
+    # Knowledge layer (live objects — never placed in `metadata`, which is
+    # JSON-serialized onto the run row).
+    application_map: Any = None
+    repository_map: Any = None
+    test_knowledge: Any = None
+    knowledge_graph: Any = None
+    index_delta: Any = None
     test_plan: TestPlan | None = None
     code_bundle: CodeBundle | None = None
     standards_report: StandardsReport | None = None

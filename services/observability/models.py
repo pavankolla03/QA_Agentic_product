@@ -432,8 +432,135 @@ class FlakyTestRow(Base):
         return (self.flakes / self.runs) if self.runs else 0.0
 
 
+# =========================================================================== #
+# Knowledge layer (v2) — persistent repository / application / test knowledge
+# =========================================================================== #
+class KnowledgeItemRow(Base, TimestampMixin):
+    """Generic knowledge record: test knowledge, the QA graph, learned patterns.
+
+    One table rather than one per kind: these are all "a JSON document keyed by
+    (project, kind, key)", and a single table keeps retrieval and cleanup simple.
+    """
+
+    __tablename__ = "knowledge_items"
+    __table_args__ = (
+        UniqueConstraint("project_id", "kind", "key", name="uq_knowledge_project_kind_key"),
+        Index("ix_knowledge_project_kind", "project_id", "kind"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)   # test | graph | pattern | standard
+    key: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    signature: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class RepositoryFileRow(Base, TimestampMixin):
+    """Per-file hash ledger backing incremental indexing."""
+
+    __tablename__ = "repository_files"
+    __table_args__ = (
+        UniqueConstraint("project_id", "path", name="uq_repofile_project_path"),
+        Index("ix_repofile_hash", "content_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    path: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(32), default="code")
+    language: Mapped[str] = mapped_column(String(32), default="")
+    symbol_count: Mapped[int] = mapped_column(Integer, default=0)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ApplicationPageRow(Base, TimestampMixin):
+    """One route of the application under test, with its locator knowledge."""
+
+    __tablename__ = "application_pages"
+    __table_args__ = (UniqueConstraint("project_id", "route", name="uq_apppage_project_route"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    route: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text, default="")
+    title: Mapped[str] = mapped_column(Text, default="")
+    dom_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    elements: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    forms: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    validation_messages: Mapped[list[str]] = mapped_column(JSON, default=list)
+    navigations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    components: Mapped[list[str]] = mapped_column(JSON, default=list)
+    screenshot_path: Mapped[str] = mapped_column(Text, default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.7)
+    visit_count: Mapped[int] = mapped_column(Integer, default=1)
+    simulated: Mapped[bool] = mapped_column(Boolean, default=False)
+    explored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ApplicationComponentRow(Base, TimestampMixin):
+    """A reusable UI component observed across pages."""
+
+    __tablename__ = "application_components"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_appcomponent_project_name"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    pages: Mapped[list[str]] = mapped_column(JSON, default=list)
+    locators: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    occurrences: Mapped[int] = mapped_column(Integer, default=0)
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    page_object: Mapped[str] = mapped_column(String(120), default="")
+
+
+class LocatorHealthRow(Base, TimestampMixin):
+    """Outcome history per locator — feeds confidence decay and re-exploration."""
+
+    __tablename__ = "locator_health"
+    __table_args__ = (UniqueConstraint("project_id", "locator", name="uq_locator_project_value"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(64), index=True)
+    locator: Mapped[str] = mapped_column(Text)
+    route: Mapped[str] = mapped_column(Text, default="")
+    strategy: Mapped[str] = mapped_column(String(32), default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    verified_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_verified: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class BudgetLedgerRow(Base, TimestampMixin):
+    """Per-run budget consumption, kept separate so cost queries stay cheap."""
+
+    __tablename__ = "budget_ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    project_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    requests: Mapped[int] = mapped_column(Integer, default=0)
+    max_requests: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_saved: Mapped[int] = mapped_column(Integer, default=0)
+    spent_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    max_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    free_calls: Mapped[int] = mapped_column(Integer, default=0)
+    paid_calls: Mapped[int] = mapped_column(Integer, default=0)
+    escalations: Mapped[int] = mapped_column(Integer, default=0)
+    stopped_by: Mapped[str] = mapped_column(String(32), default="")
+
+
 ALL_TABLES = [
     OrgRow, UserRow, ApiKeyRow, ProjectRow, RunRow, AgentTraceRow, LLMCallRow,
     ToolCallRow, RunEventRow, ApprovalRow, AuditRow, CostDailyRow,
     KnowledgeChunkRow, ArtifactRow, HealHistoryRow, FlakyTestRow,
+    KnowledgeItemRow, RepositoryFileRow, ApplicationPageRow, ApplicationComponentRow,
+    LocatorHealthRow, BudgetLedgerRow,
 ]

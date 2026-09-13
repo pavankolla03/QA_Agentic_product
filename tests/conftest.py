@@ -143,7 +143,7 @@ def agent_ctx(project: Project, repo_copy: Path, offline_router, registry) -> Ag
     from agents.base import AgentContext
     from configs.settings import load_project_standards
     from packages.observability_sdk import NullTracker
-    from services.model_router.router import RouterBudget
+    from services.model_router.router import RunBudget
 
     return AgentContext(
         run_id="run_test",
@@ -152,7 +152,7 @@ def agent_ctx(project: Project, repo_copy: Path, offline_router, registry) -> Ag
         router=offline_router,
         tools=registry,
         tracker=NullTracker(),
-        budget=RouterBudget(max_cost_usd=5.0, max_tokens=500_000),
+        budget=RunBudget(max_cost_usd=5.0, max_tokens=500_000, max_requests=200),
         standards=load_project_standards(str(repo_copy)),
     )
 

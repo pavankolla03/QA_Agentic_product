@@ -1,59 +1,149 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Model Routing Policy
-# Maps logical "capabilities" to concrete provider/model pairs, with fallbacks.
-# The router picks the first entry whose provider is configured & healthy.
-# Cost is USD per 1M tokens. Free/local models are cost 0.
+# Model Routing Policy — cost-optimized.
+#
+# The platform spends money only where reasoning actually changes the outcome.
+# Four tiers, in descending cost order:
+#
+#   reasoning  paid, high-value judgement    — requirement analysis, test architecture,
+#                                              root-cause analysis, self-healing decisions
+#   coding     specialized code model        — TypeScript/Playwright/POM/steps generation
+#   cheap      free or near-free             — summarization, classification, metadata,
+#                                              report prose, low-risk transformations
+#   embedding  vectors for retrieval         — repository/application knowledge
+#
+# A fifth tier, `none`, is implicit and is the most important one: anything
+# deterministic (file IO, git, npm, tsc, eslint, parsing, cost math, notifications)
+# never reaches this file at all.
+#
+# Prices are USD per 1M tokens. Free/local models are 0.
 # ─────────────────────────────────────────────────────────────────────────────
-version: 1
+version: 2
 
 defaults:
   temperature: 0.1
   max_tokens: 4096
   timeout_seconds: 180
   retries: 2
+  # Providers that support it are asked to cache the static prefix of a prompt
+  # (standards, conventions, application map) so repeated runs pay for it once.
+  prompt_caching: true
+  cache_min_chars: 2000
 
-# Capability -> ordered candidate list (first healthy wins)
+# ── Tier definitions ────────────────────────────────────────────────────────
 routes:
-  # Cheap, fast, high-volume: classification, summarisation, routing decisions
-  fast:
-    - { provider: ollama,     model: "qwen2.5-coder:7b",                    in: 0,    out: 0 }
-    - { provider: openrouter, model: "deepseek/deepseek-chat-v3-0324:free", in: 0,    out: 0 }
-    - { provider: openai,     model: "gpt-4o-mini",                         in: 0.15, out: 0.60 }
-    - { provider: gemini,     model: "gemini-2.0-flash",                    in: 0.10, out: 0.40 }
-    - { provider: mock,       model: "mock-fast",                           in: 0,    out: 0 }
-
-  # Deep reasoning: test design, failure root-cause, self-healing decisions
+  # High-value reasoning. Worth paying for; used sparingly and with tight budgets.
   reasoning:
-    - { provider: anthropic,  model: "claude-sonnet-5",                     in: 3.00, out: 15.00 }
-    - { provider: openrouter, model: "deepseek/deepseek-r1:free",           in: 0,    out: 0 }
-    - { provider: ollama,     model: "qwen2.5-coder:14b",                   in: 0,    out: 0 }
-    - { provider: openai,     model: "gpt-4o",                              in: 2.50, out: 10.00 }
-    - { provider: mock,       model: "mock-reasoning",                      in: 0,    out: 0 }
+    - { provider: openrouter, model: "z-ai/glm-4.6",                       in: 0.40, out: 1.75, caching: true }
+    - { provider: anthropic,  model: "claude-sonnet-5",                    in: 3.00, out: 15.00, caching: true }
+    - { provider: openrouter, model: "deepseek/deepseek-r1:free",          in: 0,    out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:14b",                  in: 0,    out: 0 }
+    - { provider: mock,       model: "mock-reasoning",                     in: 0,    out: 0 }
 
-  # Code generation: page objects, steps, fixtures
+  # Code generation. A specialized coding model beats a generalist per dollar.
   coding:
-    - { provider: anthropic,  model: "claude-sonnet-5",                     in: 3.00, out: 15.00 }
-    - { provider: ollama,     model: "qwen2.5-coder:7b",                    in: 0,    out: 0 }
-    - { provider: openrouter, model: "qwen/qwen-2.5-coder-32b-instruct:free", in: 0,  out: 0 }
-    - { provider: openai,     model: "gpt-4o",                              in: 2.50, out: 10.00 }
-    - { provider: mock,       model: "mock-coding",                         in: 0,    out: 0 }
+    - { provider: openrouter, model: "qwen/qwen-2.5-coder-32b-instruct",   in: 0.06, out: 0.18 }
+    - { provider: openrouter, model: "qwen/qwen-2.5-coder-32b-instruct:free", in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                   in: 0,    out: 0 }
+    - { provider: anthropic,  model: "claude-sonnet-5",                    in: 3.00, out: 15.00, caching: true }
+    - { provider: mock,       model: "mock-coding",                        in: 0,    out: 0 }
 
-  # Embeddings for repository knowledge
+  # Low-risk, high-volume. Should be free in steady state.
+  cheap:
+    - { provider: openrouter, model: "meta-llama/llama-3.3-70b-instruct:free", in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                   in: 0,    out: 0 }
+    - { provider: openrouter, model: "z-ai/glm-4.6",                       in: 0.40, out: 1.75 }
+    - { provider: openai,     model: "gpt-4o-mini",                        in: 0.15, out: 0.60 }
+    - { provider: mock,       model: "mock-cheap",                         in: 0,    out: 0 }
+
   embedding:
-    - { provider: ollama,     model: "nomic-embed-text",                    in: 0,    out: 0, dim: 768 }
-    - { provider: openai,     model: "text-embedding-3-small",              in: 0.02, out: 0, dim: 1536 }
-    - { provider: hashing,    model: "local-hash-512",                      in: 0,    out: 0, dim: 512 }
+    - { provider: ollama,     model: "nomic-embed-text",                   in: 0,    out: 0, dim: 768 }
+    - { provider: openai,     model: "text-embedding-3-small",             in: 0.02, out: 0, dim: 1536 }
+    - { provider: hashing,    model: "local-hash-512",                     in: 0,    out: 0, dim: 512 }
 
-# Per-agent capability preference
+# Backwards-compatible aliases (v1 called these fast/reasoning/coding).
+aliases:
+  fast: cheap
+
+# ── Which tier each agent gets by default ───────────────────────────────────
+# The floor, not the ceiling: an agent may escalate for a genuinely complex task
+# (see `escalation` below) and is downgraded when the task is trivial.
 agent_capability:
-  orchestrator:      fast
+  orchestrator:      cheap
   requirement:       reasoning
-  repository:        fast
-  exploration:       fast
+  repository:        cheap        # structure comes from parsers, not the model
+  exploration:       cheap        # the browser does the work; the model only picks targets
   test_design:       reasoning
   code_generation:   coding
-  standards:         fast
-  execution:         fast
+  standards:         cheap        # static analysis first; LLM only for semantic rules
+  execution:         cheap        # deterministic; almost never calls a model
   failure_analysis:  reasoning
   self_healing:      reasoning
-  reporting:         fast
+  reporting:         cheap
+
+# ── Task-level overrides ────────────────────────────────────────────────────
+# Finer-grained than per-agent: a single agent may run both a cheap and an
+# expensive call. Keys are the `task` string passed to the router.
+task_capability:
+  requirement.analyze:            reasoning
+  requirement.classify:           cheap
+  repository.summarize:           cheap
+  exploration.pick_targets:       cheap
+  exploration.workflows:          cheap
+  test_design.plan:               reasoning
+  test_design.batch:              reasoning
+  test_design.dedupe:             cheap
+  code_generation.page_objects:   coding
+  code_generation.steps:          coding
+  code_generation.fixtures:       coding
+  standards.semantic:             cheap
+  standards.parse_freeform:       cheap
+  failure_analysis.classify:      reasoning
+  failure_analysis.triage_bulk:   cheap
+  self_healing.propose:           reasoning
+  reporting.summarize:            cheap
+
+# ── Escalation ──────────────────────────────────────────────────────────────
+# Complexity is scored deterministically (prompt size, artifact count, retry
+# count, prior failure) before any call. Cheap work must not silently become
+# expensive, so escalation is bounded and always recorded in the trace.
+escalation:
+  enabled: true
+  # A `cheap` task escalates to `reasoning` only above this score (0..1).
+  cheap_to_reasoning_threshold: 0.75
+  # A retry after a low-quality result may escalate one tier, at most once.
+  escalate_on_retry: true
+  max_escalations_per_run: 3
+
+# ── Provider request budgets ────────────────────────────────────────────────
+# OpenRouter's free tier is request-limited, not token-limited. Track requests
+# and reroute before hitting the wall rather than failing mid-run.
+provider_limits:
+  openrouter:
+    free_requests_daily: 3000
+    # Below this many remaining free requests, route free-tier work elsewhere.
+    reserve_threshold: 200
+  ollama:
+    concurrent_requests: 2
+
+# ── Default per-run budget (a project or request may lower it) ──────────────
+run_budget:
+  max_requests: 40
+  max_input_tokens: 400000
+  max_output_tokens: 120000
+  max_cost_usd: 2.00
+  max_retries: 2
+  # Hard caps that protect against runaway loops.
+  max_correction_attempts: 3
+  max_healing_attempts: 2
+  max_execution_retries: 3
+
+# ── Measured cost baseline ──────────────────────────────────────────────────
+# Reference point supplied by the user: ~30,000 credits for 110 test cases.
+# `scripts/benchmark.py` compares real runs against this. Savings are only
+# reported once measured.
+baseline:
+  credits_total: 30000
+  test_cases: 110
+  credits_per_test: 273
+  target_reduction_initial: 0.50
+  target_reduction_mature: 0.80

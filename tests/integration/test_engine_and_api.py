@@ -24,17 +24,55 @@ async def test_run_pauses_at_the_test_plan_gate(engine, project, org_user) -> No
     assert pending[0]["diff_preview"], "the reviewer must be shown the Gherkin"
 
 
-async def test_nothing_is_written_before_approval(engine, project, org_user, repo_copy) -> None:
-    """The core safety property: a pending gate means an untouched workspace."""
-    before = {p.relative_to(repo_copy).as_posix() for p in repo_copy.rglob("*") if p.is_file()}
+def _user_files(root) -> set[str]:
+    """Everything in the repository except the platform's own `.aiqa/` cache.
+
+    `.aiqa/` holds the repository and application maps — platform bookkeeping that
+    is written during exploration and is what makes later runs cheap. The safety
+    property is about the user's *test assets*, so it is asserted over everything
+    outside that directory.
+    """
+    return {
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_file() and not p.relative_to(root).as_posix().startswith(".aiqa/")
+    }
+
+
+async def test_no_test_assets_are_written_before_approval(engine, project, org_user, repo_copy) -> None:
+    """The core safety property: a pending gate means untouched user code."""
+    before = _user_files(repo_copy)
     org_id, user_id = org_user
     run_id = engine.create_run(
         RunRequest(project_id=project.id, instruction="Automate resident registration", mode=RunMode.FULL),
         user_id=user_id, org_id=org_id,
     )
     await engine.execute(run_id)
-    after = {p.relative_to(repo_copy).as_posix() for p in repo_copy.rglob("*") if p.is_file()}
-    assert after == before
+    assert _user_files(repo_copy) == before
+
+
+async def test_only_the_knowledge_cache_may_be_written_before_approval(
+    engine, project, org_user, repo_copy
+) -> None:
+    """Whatever the platform does write pre-approval must be confined to `.aiqa/`."""
+    org_id, user_id = org_user
+    run_id = engine.create_run(
+        RunRequest(project_id=project.id, instruction="Automate resident registration", mode=RunMode.FULL),
+        user_id=user_id, org_id=org_id,
+    )
+    await engine.execute(run_id)
+
+    written = {
+        p.relative_to(repo_copy).as_posix()
+        for p in repo_copy.rglob("*")
+        if p.is_file() and p.relative_to(repo_copy).as_posix().startswith(".aiqa/")
+    }
+    # Only knowledge caches and the standards file the fixture ships with.
+    assert written <= {
+        ".aiqa/standards.yaml",
+        ".aiqa/repository_map.json",
+        ".aiqa/application_map.json",
+    }, written
 
 
 async def test_rejecting_a_gate_cancels_the_run(engine, project, org_user, repo_copy) -> None:

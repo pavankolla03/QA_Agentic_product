@@ -1,53 +1,51 @@
 # AI QA Engineer — Loop Engineering Progress Ledger
 
-> **This file is the single source of truth for resuming work.**
-> Any agent/session picking this up: read this file first, find the first phase whose
-> status is not `DONE`, and continue from its "Next action" line.
+> **Single source of truth for resuming work.** Read this first, find the first phase that is not
+> `DONE`, continue from its note. Protocol per phase: BUILD → TEST → VERIFY → update this file.
+> Never break a phase already marked DONE.
 
 - **Repo root:** `C:\Users\Pavan.Kolla\Desktop\QA_AI_Agents`
-- **Spec source:** `C:\Users\Pavan.Kolla\Downloads\AI QA Engineer.pdf`
-- **Started:** 2026-09-13
-- **Loop protocol:** for each phase → BUILD → TEST (`pytest`) → VERIFY → update this ledger → next phase.
-  Never break a previously-DONE phase; if you do, fix it before advancing.
+- **Verification:** `python -m pytest tests -q` · `python -m scripts.selfcheck` · `python -m ruff check .`
+  · `cd apps/vscode-extension && npm run compile`
 
-## Verification commands
-```
-python -m pytest tests -q                 # backend test suite
-python -m scripts.selfcheck               # end-to-end smoke of the platform
-cd apps/vscode-extension && npm run compile
-```
+---
 
-## Phase ledger
+## v1 — Foundation (COMPLETE)
+
+All 16 phases done. 160 tests green. Delivered: monorepo, domain types, security guards, LLM
+provider layer, observability + cost tracking, 31-tool execution layer, knowledge indexing,
+10 agents, resumable orchestrator, FastAPI control plane, VS Code extension, web dashboard,
+Docker/CI, docs.
+
+---
+
+## v2 — Cost-optimized architecture
+
+Primary objective: **minimize LLM usage and cost without sacrificing automation quality.**
+Paid models for high-value reasoning, free/local models for low-risk work, and *no LLM at all*
+for anything deterministic. Do not re-ask an LLM for information the platform already knows.
 
 | # | Phase | Status | Notes |
 |---|-------|--------|-------|
-| 0 | Monorepo scaffold + root config | DONE | pyproject, .env.example, configs/{models,standards,security}.yaml, settings.py, .venv |
-| 1 | packages/: types, protocol, security, schemas | DONE | enums+models (pydantic), redaction, WorkspaceGuard/CommandGuard/GitGuard/RBAC — verified |
-| 2 | LLM provider abstraction + model router | DONE | 7 providers, capability routing, health fallback, budget, cost math verified |
-| 3 | Observability + cost tracking (DB models) | DONE | 16 ORM tables, RunTracker spans, daily cost rollup, CostGovernor — verified |
-| 4 | API gateway (FastAPI): auth, projects, runs, WS | DONE | hashed API keys, RBAC, 25+ routes, WS stream w/ replay, metrics, audit, CLI |
-| 5 | Knowledge service: repo index + retrieval | DONE | framework/layout/naming detection, symbol extraction, hybrid embed+lexical retrieval — verified on sample repo |
-| 6 | Tool execution layer | DONE | 31 tools; fs confinement, cmd allowlist, git branch protection, read-only SQL, PW explore+run, all guards verified |
-| 7 | Agent engine: orchestrator + 10 agents | DONE | resumable state graph, 6 run modes, durable suspend/resume across approvals |
-| 8 | Execution service: Playwright runs + artifacts | DONE | apply-on-approval, JSON report parsing, flakiness ledger, commit-on-green |
-| 9 | Self-healing + failure analysis loop | DONE | 11 deterministic signatures + LLM triage, product-defect safety override, verify-or-revert |
-| 10 | Notification service (Slack/Teams) | DONE | Slack blocks + Teams adaptive cards, redacted, wired into Reporting agent |
-| 11 | VS Code extension | DONE | 21 commands, 4 tree views, chat webview, diff review, SecretStorage keys, compiles clean |
-| 12 | Control plane web UI | DONE | 6-tab dashboard, approve/reject in browser, cost charts, audit — verified in a real browser |
-| 13 | Infrastructure: docker-compose, CI | DONE | non-root Dockerfile w/ Playwright, compose (Postgres/Redis/Ollama profile), 2 CI workflows |
-| 14 | Tests + sample target repo fixture | DONE | 159 tests green (119 unit / 24 integration / 16 e2e) + selfcheck |
-| 15 | Docs + final polish | DONE | README, ARCHITECTURE, GETTING_STARTED, docs index; ruff clean |
+| V1 | Model tiers, budgets, request accounting | DONE | 4 tiers, task-complexity routing, run budgets (requests/tokens/cost/retries), OpenRouter daily free-request ledger, fallback chains, prompt caching |
+| V2 | Repository Map + incremental indexing | DONE | `repository_map.json`, git-hash change detection, per-file hashing, only re-index what changed |
+| V3 | Application Map + component registry | DONE | persistent pages/components/locators with confidence + last_verified, staleness re-explore policy |
+| V4 | Test Knowledge Store + QA Knowledge Graph | DONE | reuse prior implementations, requirement→feature→page→component→api→db→test edges |
+| V5 | Standards system (`.aiqa/`) | DONE | config.yaml + standards/*.md + examples/, company→project→module priority, example-based learning, free-text → structured |
+| V6 | Static-first validation pipeline | DONE | tsc + ESLint + Gherkin parser + AST rules; semantic LLM validation only when static passes and risk remains |
+| V7 | Batch test design + reuse-first flow | DONE | one planning call for N scenarios; existing-artifact discovery before generation |
+| V8 | LangGraph orchestrator | DONE | real LangGraph StateGraph + DB-backed checkpointer, conditional edges, loop caps |
+| V9 | Agent permissions | DONE | explicit per-agent capability grants; no unrestricted access |
+| V10 | Cost + management dashboards, success metrics | DONE | cost/scenario, savings vs baseline, coverage, healing accuracy, intervention rate |
+| V11 | VS Code sidebar expansion | DONE | 12 sidebar sections, 13 new commands |
+| V12 | Docs + roadmap to 100% automation | DONE | cost-optimization.md, agents.md, ROADMAP.md |
 
-## Verified end-to-end (offline, no credentials)
-`python -m scripts.selfcheck` passes: 2 approval gates (test_plan -> code_write), durable resume,
-5 generated artifacts on disk, valid tagged Gherkin, 10 agent traces / 9 LLM traces / 11 tool traces,
-6 audit entries, secret redaction + workspace confinement + path-escape all blocked.
+## Cost baseline
+
+User-provided benchmark: **~30,000 AI credits for 110 test cases** (≈273 credits/test).
+Targets: −50% initially, then −70…90%. `scripts/benchmark.py` measures against this; do not claim
+savings that have not been measured.
 
 ## Next action
-**BUILD COMPLETE.** All 16 phases DONE. 160 tests green, selfcheck green, ruff clean, extension compiles.
 
-Possible next increments (not required by the spec):
-- Real Appium execution (mobile is architecture-only today)
-- pgvector/Chroma backend for the knowledge index (currently JSON embeddings + hybrid scoring)
-- Cypress / WebdriverIO / pytest-bdd code-generation templates
-- SSO + per-project RBAC scoping beyond the current org-level roles
+v2 complete. See `docs/ROADMAP.md` for the phased path to higher automation coverage.

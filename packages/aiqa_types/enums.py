@@ -203,10 +203,17 @@ class Severity(StrEnum):
 # LLM layer
 # --------------------------------------------------------------------------- #
 class Capability(StrEnum):
-    FAST = "fast"
-    REASONING = "reasoning"
+    """Cost tiers. Ordered cheapest-first; `FAST` is the v1 alias for `CHEAP`."""
+
+    CHEAP = "cheap"
     CODING = "coding"
+    REASONING = "reasoning"
     EMBEDDING = "embedding"
+    FAST = "fast"          # deprecated alias, routed to CHEAP
+
+    @property
+    def rank(self) -> int:
+        return {"cheap": 0, "fast": 0, "coding": 1, "reasoning": 2, "embedding": 0}[self.value]
 
 
 class ProviderName(StrEnum):

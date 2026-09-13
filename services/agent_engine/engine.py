@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from agents.base import AgentContext
 from agents.orchestrator.graph import GraphResult, Orchestrator
-from configs.settings import get_settings, load_project_standards
+from configs.settings import get_settings, load_model_config, load_project_standards
 from packages.aiqa_types.enums import (
     ApprovalStatus,
     AuditAction,
@@ -44,7 +44,7 @@ from packages.aiqa_types.models import (
     TestPlan,
     new_id,
 )
-from services.model_router.router import BudgetExceeded, ModelRouter, RouterBudget
+from services.model_router.router import BudgetExceeded, ModelRouter, RunBudget
 from services.observability.db import session_scope
 from services.observability.models import ApprovalRow, ProjectRow, RunRow
 from services.observability.tracker import CostGovernor, RunTracker
@@ -383,12 +383,21 @@ class AgentEngine:
         if project.standards_override:
             standards = {**standards, **project.standards_override}
 
-        budget = RouterBudget(
+        # Run budget: config defaults, overridden per project/request. Consumption
+        # is restored from the row so a resumed run cannot reset its own ceiling.
+        budget = RunBudget.from_config(
+            load_model_config().get("run_budget"),
             max_cost_usd=float(metadata.get("max_cost_usd") or self.settings.per_run_cost_limit_usd),
-            max_tokens=int(metadata.get("max_tokens") or self.settings.max_tokens_per_run),
-            spent_usd=float(metadata.get("spent_usd") or 0.0),
-            used_tokens=int(metadata.get("used_tokens") or 0),
+            max_requests=int(metadata["max_requests"]) if metadata.get("max_requests") else None,
         )
+        consumed = metadata.get("budget_consumed") or {}
+        budget.requests = int(consumed.get("requests", 0))
+        budget.input_tokens = int(consumed.get("input_tokens", 0))
+        budget.output_tokens = int(consumed.get("output_tokens", 0))
+        budget.cached_tokens = int(consumed.get("cached_tokens", 0))
+        budget.spent_usd = float(consumed.get("spent_usd", metadata.get("spent_usd", 0.0)) or 0.0)
+        budget.escalations = int(consumed.get("escalations", 0))
+        budget.tokens_saved = int(consumed.get("tokens_saved", 0))
 
         try:
             mode = RunMode(snapshot.get("mode", "full"))
@@ -432,8 +441,8 @@ class AgentEngine:
         # A resumed run reports only the segment it executed; keep the whole trail.
         previous_visited = list(metadata.get("visited", []))
         metadata["visited"] = previous_visited + [n for n in result.visited]
+        metadata["budget_consumed"] = ctx.budget.snapshot()
         metadata["spent_usd"] = ctx.budget.spent_usd
-        metadata["used_tokens"] = ctx.budget.used_tokens
         metadata["suspended_at"] = result.suspended_at
         if ctx.repo_profile is not None:
             # Keep the profile but drop the bulky symbol list from the hot row.
