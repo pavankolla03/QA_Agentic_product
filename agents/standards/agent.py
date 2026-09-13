@@ -44,10 +44,30 @@ _SCOPE_BY_KIND: dict[ArtifactKind, str] = {
 _COMMENT_RE = re.compile(r"^\s*(//|#|\*|/\*)")
 
 
+SEMANTIC_SYSTEM = """You are reviewing generated QA automation against conventions that no linter can check.
+
+The code has ALREADY passed: TypeScript compilation, ESLint, Gherkin parsing, folder/naming checks,
+and every regex and AST rule in the organization standard. Do not repeat any of that.
+
+Judge ONLY the semantic questions listed, and only report a problem you can point at a specific line
+for. Silence is the correct answer when the code is fine — do not invent findings.
+
+Reply with ONE JSON object:
+{"violations": [{"rule_id": str, "file_path": str, "line": int, "message": str, "severity": "error|warning"}]}"""
+
+
 class StandardsAgent(BaseAgent):
+    """Deterministic first, model last.
+
+    The ordering is the whole point: a compiler answers "is this valid?" exactly
+    and for free, so the model is never asked. It is consulted only for
+    conventions that are genuinely semantic — "does this read like our code?" —
+    and only once everything checkable has already passed.
+    """
+
     name = AgentName.STANDARDS
-    capability = Capability.FAST
-    description = "Enforces organization and project QA coding standards on every generated artifact."
+    capability = Capability.CHEAP
+    description = "Static-first standards enforcement; the LLM sees only what tools cannot decide."
 
     def progress(self, ctx: AgentContext) -> float:
         return 0.68
@@ -61,7 +81,8 @@ class StandardsAgent(BaseAgent):
         rules = [r for r in (ctx.standards.get("rules") or []) if isinstance(r, dict) and r.get("id")]
         report = StandardsReport(run_id=ctx.run_id, files_checked=len(bundle.changes), rules_applied=len(rules))
 
-        for attempt in range(2):          # check → autofix → re-check
+        # ---- 1. rule engine (regex + AST/semantic checks), with autofix ---- #
+        for attempt in range(2):          # check -> autofix -> re-check
             violations: list[StandardsViolation] = []
             for change in bundle.changes:
                 violations.extend(self._check_file(ctx, change, rules))
@@ -75,7 +96,31 @@ class StandardsAgent(BaseAgent):
             report.violations = violations
             break
 
+        # ---- 2. toolchain checks (structure, Gherkin, tsc, eslint) --------- #
+        static_report = self._run_static(ctx, bundle)
+        if static_report is not None:
+            report.violations.extend(static_report.violations)
+            ctx.metadata["static_checks"] = {
+                "ran": static_report.ran,
+                "skipped": static_report.skipped,
+                "errors": static_report.error_count,
+            }
+            ctx.note(static_report.summary())
+
         report.passed = report.error_count == 0
+
+        # ---- 3. semantic review, only if everything checkable is clean ----- #
+        if report.passed:
+            semantic = await self._semantic_review(ctx, bundle, rules)
+            if semantic:
+                report.violations.extend(semantic)
+                report.passed = report.error_count == 0
+        else:
+            ctx.note(
+                "skipping semantic AI review - static checks already found "
+                f"{report.error_count} error(s), so a model call would add nothing"
+            )
+
         ctx.standards_report = report
 
         summary = (
@@ -94,6 +139,83 @@ class StandardsAgent(BaseAgent):
             for trace in getattr(ctx.tracker, "agent_traces", []):
                 if trace.agent == self.name and not trace.output_summary:
                     trace.output_summary = summary
+
+    # ------------------------------------------------------------------ #
+    def _run_static(self, ctx: AgentContext, bundle: Any) -> Any:
+        """Structure + Gherkin always; tsc/ESLint only once the files are on disk."""
+        from services.execution_service.static_validation import StaticValidationPipeline
+
+        runner = ctx.tools.get("shell.run") if ctx.tools else None
+        on_disk = bool(ctx.metadata.get("changes_applied"))
+        try:
+            pipeline = StaticValidationPipeline(ctx.project_root, ctx.standards, runner=runner)
+            return pipeline.run(bundle.changes, compile_check=on_disk)
+        except Exception as exc:  # noqa: BLE001 - a checker must not fail the run
+            ctx.warn(f"static validation could not complete: {exc}")
+            return None
+
+    async def _semantic_review(
+        self, ctx: AgentContext, bundle: Any, rules: list[dict[str, Any]]
+    ) -> list[StandardsViolation]:
+        """Ask a model only about rules no tool can express.
+
+        Costs one cheap call, and only when the deterministic pass is already
+        clean — so it never pays to re-discover a compile error.
+        """
+        semantic_rules = [
+            rule
+            for rule in rules
+            if rule.get("kind") == "semantic" and not rule.get("check")
+        ]
+        if not semantic_rules:
+            return []
+
+        # Only review the files a human would actually scrutinise.
+        reviewable = [
+            change
+            for change in bundle.changes
+            if str(getattr(change.kind, "value", change.kind)) in ("page_object", "step_definition")
+        ][:4]
+        if not reviewable:
+            return []
+
+        user = "\n".join(
+            [
+                "## Conventions to judge",
+                *[f"- [{r.get('id')}] {r.get('title') or r.get('message', '')}" for r in semantic_rules[:10]],
+                "",
+                "## House style",
+                (ctx.repo_profile.conventions_summary if ctx.repo_profile else "none recorded")[:1500],
+                "",
+                "## Files",
+                *[f"--- {c.path} ---\n{c.content[:4000]}" for c in reviewable],
+            ]
+        )
+        raw = await self.ask_json(
+            ctx, SEMANTIC_SYSTEM, user, task="standards.semantic", fallback={"violations": []}, max_tokens=1200
+        )
+
+        out: list[StandardsViolation] = []
+        known_paths = {c.path for c in bundle.changes}
+        for item in (raw or {}).get("violations", []) or []:
+            if not isinstance(item, dict) or not item.get("message"):
+                continue
+            path = str(item.get("file_path", ""))
+            if path not in known_paths:
+                continue          # a finding about a file we did not generate is noise
+            out.append(
+                StandardsViolation(
+                    rule_id=str(item.get("rule_id", "SEM-001")),
+                    severity=_severity(item.get("severity", "warning")),
+                    title="Semantic convention",
+                    message=str(item["message"])[:300],
+                    file_path=path,
+                    line=int(item.get("line", 0) or 0),
+                )
+            )
+        if out:
+            ctx.note(f"semantic review raised {len(out)} finding(s) that tools could not detect")
+        return out
 
     # ------------------------------------------------------------------ #
     def _check_file(
@@ -354,7 +476,25 @@ def _check_locator_strategy(change: FileChange, ctx: AgentContext, rule: dict[st
     return out
 
 
+def _check_no_assertions_in_page_objects(
+    change: FileChange, ctx: AgentContext, rule: dict[str, Any]
+) -> SemanticResult:
+    """Teams that keep assertions in steps want Page Objects to stay pure actions.
+
+    Only flagged when the project opts in — plenty of good suites do the
+    opposite and expose `expectX()` helpers on the Page Object.
+    """
+    out: SemanticResult = []
+    for index, line in enumerate(change.content.splitlines(), start=1):
+        if _COMMENT_RE.match(line):
+            continue
+        if re.search(r"\b(await\s+)?expect\s*\(", line):
+            out.append((index, line.strip(), "Assertion found in a Page Object; this project keeps them in steps."))
+    return out
+
+
 SEMANTIC_CHECKS: dict[str, SemanticCheck] = {
+    "no_assertions_in_page_objects": _check_no_assertions_in_page_objects,
     "scenario_tagged": _check_scenario_tagged,
     "max_scenario_steps": _check_max_scenario_steps,
     "feature_has_context": _check_feature_has_context,

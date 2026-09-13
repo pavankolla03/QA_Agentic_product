@@ -75,10 +75,14 @@ class ExplorationAgent(BaseAgent):
         candidate_routes = self._candidate_routes(ctx, app_map)
         failed_locators = set(ctx.metadata.get("failed_locators") or [])
 
+        # A real browser can improve on a previous HTTP-only capture; without
+        # one, re-crawling would just re-read the same static HTML.
+        browser_available = bool((ctx.toolchain or {}).get("playwright_installed"))
         to_explore, cached = app_map.plan_exploration(
             candidate_routes,
             app_version=ctx.metadata.get("app_version", ""),
             failed_locators=failed_locators,
+            browser_available=browser_available,
         )
 
         if cached:

@@ -16,11 +16,9 @@ from typing import Any
 
 from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import AgentName, Capability
-from services.knowledge_service.indexer import (
-    KnowledgeRetriever,
-    RepositoryIndexer,
-    summarize_conventions,
-)
+from services.knowledge_service.incremental import IncrementalIndexer
+from services.knowledge_service.indexer import KnowledgeRetriever, summarize_conventions
+from services.knowledge_service.standards_engine import StandardsEngine
 from tools.shell.shell_tools import probe_toolchain
 
 SYSTEM = """You are a code-comprehension specialist for QA automation repositories.
@@ -44,10 +42,34 @@ class RepositoryAgent(BaseAgent):
     async def run(self, ctx: AgentContext) -> None:
         ctx.toolchain = probe_toolchain(ctx.project_root)
 
-        indexer = RepositoryIndexer(ctx.project.id, ctx.project_root)
-        profile = await indexer.index(router=ctx.router)
+        # Incremental: an unchanged repository costs nothing at all, and a
+        # one-file change costs one file's worth of parsing and embedding.
+        indexer = IncrementalIndexer(ctx.project.id, ctx.project_root)
+        profile, delta, repo_map = await indexer.sync(router=ctx.router, budget=ctx.budget)
         profile.project_id = ctx.project.id
         ctx.repo_profile = profile
+        ctx.repository_map = repo_map
+        ctx.index_delta = delta
+        ctx.metadata["index_delta"] = delta.to_dict()
+        ctx.note(f"repository index: {delta.summary()}")
+
+        # Resolve the layered standards now that the repository is known, so
+        # every later prompt shares one stable, cacheable house-style prefix.
+        resolved = StandardsEngine(ctx.project_root).resolve(module=ctx.metadata.get("module", ""))
+        ctx.standards = {**ctx.standards, **resolved.document}
+        ctx.metadata["standards_sources"] = resolved.sources
+        ctx.metadata["standards_prefix"] = resolved.prefix()
+        ctx.metadata["standards_fingerprint"] = resolved.fingerprint()
+        if resolved.house_style.examples_analysed:
+            ctx.note(
+                f"learned house style from {len(resolved.house_style.examples_analysed)} example file(s) "
+                f"in .aiqa/examples/"
+            )
+        if resolved.unparsed_prose:
+            ctx.warn(
+                f"{len(resolved.unparsed_prose)} line(s) of prose standards could not be turned into rules: "
+                + "; ".join(resolved.unparsed_prose[:3])
+            )
 
         if profile.file_count == 0:
             ctx.warn(

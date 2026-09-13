@@ -9,6 +9,7 @@ paragraph is model-written, so a hallucination cannot misstate a result.
 from __future__ import annotations
 
 import html
+from pathlib import Path
 from typing import Any
 
 from agents.base import AgentContext, BaseAgent
@@ -61,6 +62,9 @@ class ReportingAgent(BaseAgent):
         report.html = _html(report, facts)
         ctx.report = report
 
+        # Everything this run learned becomes cheaper next time.
+        self._persist_knowledge(ctx)
+
         self._persist_artifact(ctx, report)
         self._notify(ctx, report, facts)
 
@@ -71,6 +75,86 @@ class ReportingAgent(BaseAgent):
                     trace.output_summary = report.headline
 
     # ------------------------------------------------------------------ #
+    def _persist_knowledge(self, ctx: AgentContext) -> None:
+        """Write this run's scenarios into the Test Knowledge Store and QA graph.
+
+        This is what makes the platform get cheaper with use: the next request
+        for a related feature finds prior work instead of paying to redesign it.
+        """
+        from services.knowledge_service.test_knowledge import (
+            QAKnowledgeGraph,
+            TestKnowledge,
+            TestKnowledgeStore,
+        )
+
+        if ctx.test_plan is None:
+            return
+        try:
+            store = ctx.test_knowledge or TestKnowledgeStore(ctx.project.id)
+            graph = ctx.knowledge_graph or QAKnowledgeGraph(ctx.project.id)
+
+            changes = ctx.code_bundle.changes if ctx.code_bundle else []
+            feature_files = [c.path for c in changes if str(getattr(c.kind, "value", c.kind)) == "feature"]
+            step_files = [c.path for c in changes if str(getattr(c.kind, "value", c.kind)) == "step_definition"]
+            page_objects = [
+                Path(c.path).stem for c in changes if str(getattr(c.kind, "value", c.kind)) == "page_object"
+            ] + (ctx.test_plan.page_objects_reused or [])
+
+            statuses = {
+                (case.test_id or case.name): case.status.value
+                for case in (ctx.execution.results if ctx.execution else [])
+            }
+            healed = {heal.test_id for heal in ctx.heals if heal.verified}
+            routes = [snapshot.route_pattern for snapshot in (ctx.exploration.snapshots if ctx.exploration else [])]
+            components = list((ctx.application_map.components or {}).keys()) if ctx.application_map else []
+
+            for feature in ctx.test_plan.features:
+                for scenario in feature.scenarios:
+                    knowledge = TestKnowledge(
+                        test_id=scenario.test_id or scenario.name,
+                        name=scenario.name,
+                        feature=feature.name,
+                        requirement=ctx.requirement.title if ctx.requirement else ctx.instruction[:120],
+                        tags=scenario.tags,
+                        feature_file=feature_files[0] if feature_files else "",
+                        step_file=step_files[0] if step_files else "",
+                        page_objects=sorted(set(page_objects)),
+                        fixtures=list(ctx.test_plan.fixtures_reused or []),
+                        components=components[:10],
+                        apis=list(ctx.test_plan.api_checks or []),
+                        db_tables=list(ctx.test_plan.db_checks or []),
+                        routes=[r for r in routes if r][:6],
+                        steps=[step.render() for step in scenario.steps],
+                    )
+                    status = statuses.get(knowledge.test_id, "")
+                    if status:
+                        knowledge.runs = 1
+                        knowledge.passes = 1 if status == "passed" else 0
+                        knowledge.failures = 1 if status in ("failed", "timed_out") else 0
+                        knowledge.last_status = status
+                    if knowledge.test_id in healed:
+                        knowledge.heals = 1
+                    store.put(knowledge)
+                    graph.ingest_test(knowledge)
+
+            for analysis in ctx.analyses:
+                graph.ingest_failure(analysis.test_id, analysis.category.value, analysis.root_cause[:120])
+            graph.save()
+
+            # Feed execution outcomes back into locator confidence.
+            if ctx.application_map is not None and ctx.execution is not None:
+                for case in ctx.execution.failures:
+                    if case.failed_locator:
+                        ctx.application_map.record_locator_outcome(case.failed_locator, success=False)
+                ctx.application_map.save(ctx.project_root)
+
+            ctx.note(
+                f"knowledge updated: {store.stats()['tests_known']} test(s) known, "
+                f"graph has {graph.coverage()['nodes']} node(s)"
+            )
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must not fail a run
+            ctx.warn(f"could not persist run knowledge: {exc}")
+
     def _persist_artifact(self, ctx: AgentContext, report: RunReport) -> None:
 
         from configs.settings import get_settings

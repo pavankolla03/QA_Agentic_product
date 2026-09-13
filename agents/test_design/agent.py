@@ -63,7 +63,14 @@ class TestDesignAgent(BaseAgent):
         if requirement is None:
             raise ValueError("test design requires a requirement")
 
-        user = self._build_prompt(ctx)
+        # ---- 0. reuse discovery (deterministic, free) ------------------- #
+        # Ask what we already have before paying a reasoning model to invent it.
+        reuse = self._discover_reuse(ctx)
+
+        # ---- 1. one batched design call for every scenario -------------- #
+        # Designing six scenarios in six calls costs six times as much and
+        # produces a less coherent suite, because no call sees the others.
+        user = self._build_prompt(ctx, reuse)
         raw = await self.ask_json(
             ctx, SYSTEM, user,
             task="test_design.plan",
@@ -71,6 +78,9 @@ class TestDesignAgent(BaseAgent):
             max_tokens=6000,
         )
         plan = _to_plan(raw, ctx)
+
+        # ---- 2. drop scenarios the suite already covers ----------------- #
+        self._drop_duplicates(ctx, plan)
 
         # Deterministic quality gates — the model is a drafter, not the authority.
         gaps = _coverage_gaps(plan, ctx)
@@ -111,9 +121,89 @@ class TestDesignAgent(BaseAgent):
         )
 
     # ------------------------------------------------------------------ #
-    def _build_prompt(self, ctx: AgentContext) -> str:
+    def _discover_reuse(self, ctx: AgentContext) -> dict[str, Any]:
+        """What the platform already knows that answers part of this request.
+
+        Pure lookup against the Test Knowledge Store, the repository map and the
+        QA graph. No model call, so it is always worth doing first.
+        """
+        from services.knowledge_service.test_knowledge import QAKnowledgeGraph, TestKnowledgeStore
+
+        requirement = ctx.requirement
+        query = " ".join(
+            filter(None, [ctx.instruction, requirement.title if requirement else "",
+                          " ".join(c.text for c in (requirement.acceptance_criteria if requirement else [])[:5])])
+        )
+
+        store = TestKnowledgeStore(ctx.project.id)
+        ctx.test_knowledge = store
+        similar = store.find_similar(query, limit=5)
+        assets = store.reusable_assets(query)
+
+        graph = QAKnowledgeGraph(ctx.project.id)
+        ctx.knowledge_graph = graph
+        graph_context = graph.context_for(query, depth=2)
+
+        # Anything the repository already contains is reuse, not new work.
+        if ctx.repo_profile:
+            for page in ctx.repo_profile.symbols_of("page_object"):
+                if page.name not in assets["page_objects"]:
+                    assets["page_objects"].append(page.name)
+            for fixture in ctx.repo_profile.symbols_of("fixture"):
+                if fixture.name not in assets["fixtures"]:
+                    assets["fixtures"].append(fixture.name)
+        if ctx.application_map is not None:
+            for name, entry in (ctx.application_map.components or {}).items():
+                if entry.get("shared") and name not in assets["components"]:
+                    assets["components"].append(name)
+
+        reuse = {
+            "similar_tests": [
+                {"test_id": item.test_id, "name": item.name, "score": score,
+                 "pages": item.page_objects, "reliability": round(item.reliability, 2)}
+                for score, item in similar
+            ],
+            "assets": assets,
+            "graph": graph_context,
+            "existing_scenarios": [item.name for item in store.all()][:60],
+        }
+
+        if similar:
+            ctx.note(
+                f"reuse: {len(similar)} similar test(s) already exist "
+                f"({', '.join(item.test_id for _s, item in similar[:4])}); "
+                f"reusable assets: {sum(len(v) for v in assets.values())}"
+            )
+        return reuse
+
+    def _drop_duplicates(self, ctx: AgentContext, plan: TestPlan) -> None:
+        """Remove designed scenarios that the suite already covers.
+
+        Duplicate coverage is pure waste twice over: it costs generation tokens
+        now and runtime on every CI run forever.
+        """
+        store = ctx.test_knowledge
+        if store is None:
+            return
+        dropped: list[str] = []
+        for feature in plan.features:
+            kept: list[Scenario] = []
+            for scenario in feature.scenarios:
+                existing = store.duplicate_of(scenario.name)
+                if existing is not None:
+                    dropped.append(f"{scenario.name} (already covered by {existing.test_id})")
+                    continue
+                kept.append(scenario)
+            feature.scenarios = kept
+        if dropped:
+            ctx.note(f"dropped {len(dropped)} duplicate scenario(s): " + "; ".join(dropped[:4]))
+            ctx.metadata["duplicates_dropped"] = dropped
+
+    # ------------------------------------------------------------------ #
+    def _build_prompt(self, ctx: AgentContext, reuse: dict[str, Any] | None = None) -> str:
         requirement = ctx.requirement
         assert requirement is not None
+        reuse = reuse or {}
         standards = ctx.standards
         naming = standards.get("naming", {}) or {}
         layout = (ctx.repo_profile.detected_layout if ctx.repo_profile else {}) or standards.get("layout", {})
@@ -196,7 +286,44 @@ class TestDesignAgent(BaseAgent):
         if ctx.project.database_dsn_ref:
             sections.append("A database connection is configured — DB assertions are available for persistence checks.")
 
-        sections += ["", "Design the test plan now."]
+        # ---- reuse context: the cheapest tokens in the whole prompt ------ #
+        similar = reuse.get("similar_tests") or []
+        if similar:
+            sections += [
+                "",
+                "## Coverage that already exists - DO NOT redesign these",
+                *[
+                    f"  - [{item['test_id']}] {item['name']} (similarity {item['score']:.2f}, "
+                    f"pages: {', '.join(item['pages'][:3]) or 'none'})"
+                    for item in similar
+                ],
+                "Design only what these do not already cover.",
+            ]
+
+        assets = reuse.get("assets") or {}
+        if any(assets.values()):
+            sections += [
+                "",
+                "## Assets available for reuse - prefer these over anything new",
+                *[
+                    f"  {key.replace('_', ' ')}: {', '.join(values[:12])}"
+                    for key, values in assets.items()
+                    if values
+                ],
+            ]
+
+        graph = reuse.get("graph") or {}
+        if graph:
+            sections += [
+                "",
+                "## Related knowledge (from the QA graph)",
+                *[
+                    f"  {kind}: {', '.join(str(n.get('label', n.get('key', ''))) for n in nodes[:8])}"
+                    for kind, nodes in graph.items()
+                ],
+            ]
+
+        sections += ["", "Design the test plan now, in a single response covering every scenario."]
         return "\n".join(sections)
 
 

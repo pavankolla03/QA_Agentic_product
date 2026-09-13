@@ -228,6 +228,7 @@ class ApplicationMap:
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         app_version: str = "",
         failed_locators: set[str] | None = None,
+        browser_available: bool = False,
     ) -> tuple[bool, str]:
         """Decide whether a route must be re-crawled. Returns ``(needed, reason)``.
 
@@ -239,8 +240,11 @@ class ApplicationMap:
             return True, "route has never been explored"
         if app_version and self.app_version and app_version != self.app_version:
             return True, f"application version changed ({self.app_version} -> {app_version})"
-        if page.simulated:
-            return True, "previous capture used the HTTP fallback, not a real browser"
+        if page.simulated and browser_available:
+            # Worth re-crawling only because we can now do better than the HTTP
+            # probe. Without a browser this would loop forever re-capturing the
+            # same static HTML, so a simulated page stays cached instead.
+            return True, "a browser is now available to improve on the HTTP-only capture"
         if not page.elements:
             return True, "no elements were captured previously"
 
@@ -267,13 +271,15 @@ class ApplicationMap:
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         app_version: str = "",
         failed_locators: set[str] | None = None,
+        browser_available: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         """Split candidate routes into those needing a crawl and those already known."""
         to_explore: list[str] = []
         cached: dict[str, str] = {}
         for route in routes:
             needed, reason = self.needs_exploration(
-                route, ttl_seconds=ttl_seconds, app_version=app_version, failed_locators=failed_locators
+                route, ttl_seconds=ttl_seconds, app_version=app_version,
+                failed_locators=failed_locators, browser_available=browser_available,
             )
             if needed:
                 to_explore.append(route)

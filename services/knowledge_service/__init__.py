@@ -26,6 +26,13 @@ from services.knowledge_service.repository_map import (  # noqa: F401
     git_dirty_files,
     git_head,
 )
+from services.knowledge_service.standards_engine import (  # noqa: F401
+    HouseStyle,
+    ResolvedStandards,
+    StandardsEngine,
+    learn_house_style,
+    parse_freeform_standards,
+)
 from services.knowledge_service.test_knowledge import (  # noqa: F401
     QAKnowledgeGraph,
     TestKnowledge,
