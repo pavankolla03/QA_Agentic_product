@@ -237,6 +237,26 @@ production app is not.
 
 ---
 
+## Rebuilding the extension
+
+```bash
+cd apps/vscode-extension
+npm run compile
+npx vsce package --allow-missing-repository
+code --install-extension ai-qa-engineer-0.1.0.vsix --force
+```
+
+Then **Developer: Reload Window** in VS Code — a newly installed extension is
+not picked up by a window that is already open.
+
+Do **not** pass `--no-dependencies`. The API client imports `ws` at module
+scope, so a VSIX without it installs cleanly and then fails to load: no
+activation, no commands, and `command 'aiqa.openChat' not found` with nothing
+in the logs, because an extension that never loads never logs.
+`tests/unit/test_extension_package.py` checks the built VSIX for this.
+
+---
+
 ## Cost safety
 
 Your two keys are in `.env`, which is gitignored and on the tool layer's deny
