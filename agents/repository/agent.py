@@ -33,7 +33,7 @@ Do not invent files or APIs that are not in the facts. Plain prose, no JSON, no 
 
 class RepositoryAgent(BaseAgent):
     name = AgentName.REPOSITORY
-    capability = Capability.FAST
+    capability = Capability.CHEAP
     description = "Indexes the target repository and learns its conventions, layout and reusable assets."
 
     def progress(self, ctx: AgentContext) -> float:

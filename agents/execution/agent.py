@@ -26,7 +26,7 @@ from packages.aiqa_types.models import ExecutionResult
 
 class ExecutionAgent(BaseAgent):
     name = AgentName.EXECUTION
-    capability = Capability.FAST
+    capability = Capability.CHEAP
     description = "Applies approved changes to the workspace and runs the test suite."
 
     def progress(self, ctx: AgentContext) -> float:
@@ -236,7 +236,7 @@ class CommitAgent(BaseAgent):
     """Commits verified work. Separate from execution so it only runs on green."""
 
     name = AgentName.EXECUTION
-    capability = Capability.FAST
+    capability = Capability.CHEAP
     description = "Commits the generated tests once they have been verified."
 
     def skip_reason(self, ctx: AgentContext) -> str:

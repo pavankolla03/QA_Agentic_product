@@ -26,7 +26,7 @@ Plain prose only, no headings, no JSON."""
 
 class ReportingAgent(BaseAgent):
     name = AgentName.REPORTING
-    capability = Capability.FAST
+    capability = Capability.CHEAP
     description = "Assembles the run report and delivers it to Slack/Teams."
 
     def progress(self, ctx: AgentContext) -> float:

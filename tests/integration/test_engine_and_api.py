@@ -508,3 +508,26 @@ async def test_langgraph_honours_approval_gates(project, org_user) -> None:
     engine.respond_to_approval(result.approval_id, approved=True, user_id=user_id)
     resumed = await engine.execute(run_id)
     assert resumed.visited[0] == "test_design", "resume must re-enter the suspending node"
+
+
+def test_timestamps_carry_an_explicit_utc_offset(api_client, repo_copy) -> None:
+    """Regression: SQLite drops tzinfo, so naive ISO strings made a browser
+    render freshly-created runs as hours old."""
+    project_id = api_client.post(
+        "/api/projects", json={"name": "tz", "repository_path": str(repo_copy)}
+    ).json()["id"]
+    created = api_client.post(
+        "/api/runs",
+        json={"project_id": project_id, "instruction": "Automate resident registration",
+              "mode": "plan_only", "start": False},
+    ).json()
+
+    assert created["created_at"], "runs must report when they were created"
+    assert created["created_at"].endswith("+00:00"), created["created_at"]
+
+    from datetime import datetime, timezone
+
+    parsed = datetime.fromisoformat(created["created_at"])
+    assert parsed.tzinfo is not None
+    age = abs((datetime.now(timezone.utc) - parsed).total_seconds())
+    assert age < 120, f"a run created just now reported an age of {age:.0f}s"

@@ -237,6 +237,9 @@
     body.appendChild(header);
 
     Object.entries(routes).forEach(([capability, route]) => {
+      if (capability === 'fast') {
+        return; // v1 alias of `cheap`; listing both is noise
+      }
       const tr = document.createElement('tr');
       tr.appendChild(el('td', null, capability));
       tr.appendChild(el('td', null, route ? route.provider + ' / ' + route.model : 'none available'));

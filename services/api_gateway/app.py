@@ -149,7 +149,17 @@ def _router() -> ModelRouter:
 
 
 def _iso(value: datetime | None) -> str:
-    return value.isoformat() if value else ""
+    """Serialize a timestamp as unambiguous UTC.
+
+    SQLite returns naive datetimes even for columns declared timezone-aware.
+    Emitting them without an offset makes a browser parse UTC as local time,
+    which showed freshly-created runs as hours old.
+    """
+    if not value:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 # =========================================================================== #
