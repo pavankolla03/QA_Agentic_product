@@ -74,6 +74,7 @@ def test_menu_entries_reference_real_commands(manifest) -> None:
 # Views
 # --------------------------------------------------------------------------- #
 def test_every_view_has_a_provider(manifest, sources) -> None:
+    """A view with no provider renders as an empty panel with no error."""
     declared = {
         view["id"]
         for views in manifest["contributes"].get("views", {}).values()
@@ -81,9 +82,31 @@ def test_every_view_has_a_provider(manifest, sources) -> None:
     }
     bound: set[str] = set()
     for text in sources.values():
+        # Tree views bind by literal id; a webview view binds via the static
+        # `viewType` on its provider class, so accept either spelling.
         bound |= set(re.findall(r"registerTreeDataProvider\(\s*'([a-zA-Z0-9._]+)'", text))
+        bound |= set(re.findall(r"registerWebviewViewProvider\(\s*'([a-zA-Z0-9._]+)'", text))
+        bound |= set(re.findall(r"viewType\s*=\s*'([a-zA-Z0-9._]+)'", text))
     missing = declared - bound
     assert not missing, f"views with no provider (they render empty): {sorted(missing)}"
+
+
+def test_the_chat_is_a_docked_view_not_a_command_only_panel(manifest, sources) -> None:
+    """Clicking the extension icon must land on somewhere to type.
+
+    It used to open a tree of links, with the chat behind a command name you
+    had to remember. Copilot and Claude Code dock the conversation instead,
+    and the conversation is this product's primary surface too.
+    """
+    views = manifest["contributes"]["views"]["aiqa"]
+    assert views[0]["id"] == "aiqa.chatView", "the chat must be the first view in the container"
+    assert views[0].get("type") == "webview", "a tree cannot host a chat"
+
+    joined = "\n".join(sources.values())
+    assert "registerWebviewViewProvider" in joined
+    # A run outlives a glance at another view; losing the transcript would make
+    # the sidebar useless precisely when it matters.
+    assert "retainContextWhenHidden" in joined
 
 
 # --------------------------------------------------------------------------- #

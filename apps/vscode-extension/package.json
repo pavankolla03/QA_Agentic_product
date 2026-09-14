@@ -39,6 +39,12 @@
     "views": {
       "aiqa": [
         {
+          "id": "aiqa.chatView",
+          "name": "Chat",
+          "type": "webview",
+          "visibility": "visible"
+        },
+        {
           "id": "aiqa.assistant",
           "name": "Assistant",
           "icon": "$(comment-discussion)"

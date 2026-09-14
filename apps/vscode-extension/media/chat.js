@@ -631,5 +631,29 @@
     });
   });
 
+  // Sidebar suggestion chips. Some prefill the composer so the wording can be
+  // edited before sending; others run a command outright, because "show me the
+  // coverage gaps" is not a prompt and pretending it is would be a detour.
+  document.querySelectorAll('.suggestion').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      const command = chip.getAttribute('data-cmd');
+      if (command) {
+        vscode.postMessage({ command: 'runCommand', id: command });
+        return;
+      }
+      els.prompt.value = chip.getAttribute('data-fill') || chip.textContent;
+      els.prompt.focus();
+    });
+  });
+
+  // The sidebar is narrow, so a fixed three-row box wastes most of it while a
+  // long instruction is being typed. Grow to the text, within reason.
+  if (els.prompt) {
+    els.prompt.addEventListener('input', function () {
+      els.prompt.style.height = 'auto';
+      els.prompt.style.height = Math.min(els.prompt.scrollHeight, 220) + 'px';
+    });
+  }
+
   vscode.postMessage({ command: 'refresh' });
 })();

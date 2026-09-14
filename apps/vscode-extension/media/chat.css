@@ -391,3 +391,130 @@ button:disabled { opacity: 0.5; cursor: default; }
   font-size: 0.85em;
   padding: 1px 0 2px;
 }
+
+/* ---------------------------------------------------------------------- */
+/* Sidebar layout.
+   A webview view is roughly 300px wide and full height, which is the opposite
+   shape from the editor tab this started as: the transcript needs every pixel
+   of width, and the composer has to stay reachable without scrolling. */
+body.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+body.sidebar .timeline {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+body.sidebar .composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--vscode-panel-border);
+  padding: 6px 8px 8px;
+  background: var(--vscode-sideBar-background);
+}
+
+body.sidebar .composer-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8em;
+  padding-bottom: 4px;
+}
+
+body.sidebar .composer-meta .spacer {
+  flex: 1 1 auto;
+}
+
+body.sidebar textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+body.sidebar textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+body.sidebar .composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+body.sidebar .composer-actions select {
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 0.85em;
+  max-width: 45%;
+}
+
+body.sidebar .composer-actions .muted {
+  flex: 1 1 auto;
+  font-size: 0.8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.sidebar button.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+body.sidebar button.primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+/* The empty state carries the only instruction most people will read, so it
+   says what makes a good prompt rather than describing the product. */
+.welcome-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.welcome-sub {
+  opacity: 0.75;
+  line-height: 1.45;
+  margin-bottom: 10px;
+  font-size: 0.9em;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.suggestion {
+  background: var(--vscode-button-secondaryBackground, var(--vscode-editorWidget-background));
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 0.85em;
+  cursor: pointer;
+}
+
+.suggestion:hover {
+  background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+}

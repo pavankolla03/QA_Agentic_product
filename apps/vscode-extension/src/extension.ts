@@ -10,7 +10,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ApiClient, ApiError, Approval, RunMode } from './client/apiClient';
-import { ChatPanel, showDiffDocument } from './panels/chatPanel';
+import { showDiffDocument } from './panels/chatPanel';
+import { ChatViewProvider } from './panels/chatView';
 import { ServerManager } from './server/serverManager';
 import { AgentsProvider, ApprovalItem, ApprovalsProvider, RunsProvider } from './views/trees';
 import {
@@ -34,6 +35,7 @@ let panels: { refresh(): void }[] = [];
 let output: vscode.LogOutputChannel;
 let pollTimer: NodeJS.Timeout | undefined;
 let server: ServerManager;
+let chat: ChatViewProvider;
 
 const config = () => vscode.workspace.getConfiguration('aiqa');
 const projectId = () => config().get<string>('projectId', '');
@@ -48,6 +50,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(server);
 
   // -- sidebar ------------------------------------------------------- //
+  // The chat is the primary surface, so it is a docked view rather than a
+  // command-summoned editor tab: clicking the extension icon should land on
+  // somewhere to type.
+  chat = new ChatViewProvider(context, api, () => refreshAll());
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chat, {
+      // A run takes minutes on free models and the engineer will look at other
+      // views meanwhile; rebuilding the webview would drop the transcript.
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
   approvalsProvider = new ApprovalsProvider(api);
   runsProvider = new RunsProvider(api, projectId);
   agentsProvider = new AgentsProvider(api);
@@ -197,8 +211,9 @@ function wrap(id: string, handler: (...args: any[]) => unknown) {
   };
 }
 
-async function openChat(context: vscode.ExtensionContext): Promise<ChatPanel> {
-  return ChatPanel.show(context, api, refreshAll);
+async function openChat(_context: vscode.ExtensionContext): Promise<ChatViewProvider> {
+  await chat.reveal();
+  return chat;
 }
 
 async function promptAndRun(context: vscode.ExtensionContext, mode: RunMode): Promise<void> {
