@@ -134,3 +134,71 @@ def test_the_compile_gate_runs_after_the_files_are_written() -> None:
     applied = execution.index('ctx.metadata["changes_applied"] = True')
     checked = execution.index("self._compile_check(ctx, bundle)")
     assert applied < checked, "the check must come after the files land"
+
+
+# --------------------------------------------------------------------------- #
+# The sidebar
+# --------------------------------------------------------------------------- #
+def test_the_chat_has_a_container_to_itself(manifest) -> None:
+    """Why the chat was invisible.
+
+    Thirteen views shared one container and twelve of them defaulted to
+    expanded, so the chat was a two-line strip above a stack of trees. It was
+    contributed, registered and resolved -- and unusable. Copilot and Claude
+    Code each give their chat a container of its own, and that is the whole
+    difference between a chat you land on and one you scroll to.
+    """
+    views = manifest["contributes"]["views"]
+    assert list(views["aiqa"]) and len(views["aiqa"]) == 1, (
+        "the chat container must hold only the chat; anything else squeezes it"
+    )
+    assert views["aiqa"][0]["id"] == "aiqa.chatView"
+
+    containers = {c["id"] for c in manifest["contributes"]["viewsContainers"]["activitybar"]}
+    assert "aiqaWorkbench" in containers, "the trees need somewhere else to live"
+
+    # Everything that is reference material starts collapsed; only work that
+    # needs a decision is open.
+    opens = {v["id"] for v in views["aiqaWorkbench"] if v.get("visibility") != "collapsed"}
+    assert opens <= {"aiqa.approvals", "aiqa.runs"}, f"too much is open by default: {sorted(opens)}"
+
+
+def test_every_container_icon_exists(manifest) -> None:
+    for container in manifest["contributes"]["viewsContainers"]["activitybar"]:
+        assert (EXTENSION / container["icon"]).is_file(), f"{container['icon']} is missing"
+
+
+def test_the_chat_is_reachable_without_the_sidebar(manifest) -> None:
+    """From any file: a keybinding and an editor-title button."""
+    keys = {k["command"] for k in manifest["contributes"].get("keybindings", [])}
+    assert "aiqa.openChat" in keys
+    editor_title = manifest["contributes"]["menus"].get("editor/title", [])
+    assert any(item["command"] == "aiqa.openChat" for item in editor_title)
+
+
+def test_the_chat_renders_every_event_the_backend_emits() -> None:
+    """`compile_checked` was emitted by the backend and dropped by the webview.
+
+    The chat's switch had no case for it and a silent `default`, so the one
+    line that says whether the generated code compiles was produced, streamed,
+    received -- and never shown. Any future event type would have gone the same
+    way, so this pins the contract from both ends.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    emitted: set[str] = set()
+    pattern = re.compile(
+        r'(?:emit|emit_event|publish|record_event|add_event)\s*\(\s*[^)]*?["\']([a-z][a-z0-9_]+)["\']',
+        re.S,
+    )
+    for source in root.rglob("*.py"):
+        if any(part in source.parts for part in (".venv", "node_modules", ".git", "tests")):
+            continue
+        emitted |= set(pattern.findall(source.read_text(encoding="utf-8", errors="ignore")))
+
+    chat_js = (EXTENSION / "media" / "chat.js").read_text(encoding="utf-8")
+    handled = set(re.findall(r"case '([a-z_]+)':", chat_js))
+
+    missing = emitted - handled
+    assert not missing, f"the chat silently drops these emitted events: {sorted(missing)}"

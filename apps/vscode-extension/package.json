@@ -31,8 +31,13 @@
       "activitybar": [
         {
           "id": "aiqa",
-          "title": "AI QA Engineer",
+          "title": "AI QA Chat",
           "icon": "media/icon.svg"
+        },
+        {
+          "id": "aiqaWorkbench",
+          "title": "AI QA Engineer",
+          "icon": "media/workbench.svg"
         }
       ]
     },
@@ -42,67 +47,88 @@
           "id": "aiqa.chatView",
           "name": "Chat",
           "type": "webview",
-          "visibility": "visible"
-        },
-        {
-          "id": "aiqa.assistant",
-          "name": "Assistant",
-          "icon": "$(comment-discussion)"
-        },
+          "visibility": "visible",
+          "contextualTitle": "AI QA Chat",
+          "icon": "media/icon.svg"
+        }
+      ],
+      "aiqaWorkbench": [
         {
           "id": "aiqa.approvals",
           "name": "Approvals",
-          "icon": "$(check)"
+          "icon": "$(check)",
+          "visibility": "visible",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.runs",
           "name": "Test Runs",
-          "icon": "$(history)"
+          "icon": "$(history)",
+          "visibility": "visible",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.failures",
           "name": "Failures",
-          "icon": "$(error)"
+          "icon": "$(error)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.healing",
           "name": "Self-Healing",
-          "icon": "$(wrench)"
+          "icon": "$(wrench)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.activity",
           "name": "Agent Activity",
-          "icon": "$(pulse)"
+          "icon": "$(pulse)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.knowledge",
           "name": "Knowledge",
-          "icon": "$(database)"
+          "icon": "$(database)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.standards",
           "name": "Standards",
-          "icon": "$(law)"
+          "icon": "$(law)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.costs",
           "name": "Costs",
-          "icon": "$(credit-card)"
+          "icon": "$(credit-card)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.agents",
           "name": "Agents",
-          "icon": "$(organization)"
+          "icon": "$(organization)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.reports",
           "name": "Reports",
-          "icon": "$(file-text)"
+          "icon": "$(file-text)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         },
         {
           "id": "aiqa.configuration",
           "name": "Configuration",
-          "icon": "$(gear)"
+          "icon": "$(gear)",
+          "visibility": "collapsed",
+          "contextualTitle": "AI QA Engineer"
         }
       ]
     },
@@ -114,8 +140,8 @@
       },
       {
         "command": "aiqa.openChat",
-        "title": "AI QA: Open Chat",
-        "icon": "$(comment-discussion)"
+        "title": "Open Chat",
+        "icon": "$(beaker)"
       },
       {
         "command": "aiqa.automate",
@@ -308,11 +334,6 @@
     "menus": {
       "view/title": [
         {
-          "command": "aiqa.openChat",
-          "when": "view == aiqa.assistant",
-          "group": "navigation@1"
-        },
-        {
           "command": "aiqa.refresh",
           "when": "view =~ /aiqa\\./",
           "group": "navigation@2"
@@ -362,6 +383,12 @@
         {
           "command": "aiqa.openRun",
           "when": "false"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "aiqa.openChat",
+          "group": "navigation@100"
         }
       ]
     },
@@ -444,6 +471,11 @@
           "type": "string",
           "default": "C:\\Users\\Pavan.Kolla\\Desktop\\QA_AI_Agents",
           "description": "Path to the AI QA Engineer checkout to start the control plane from. Needed when the open workspace is your test repository rather than the platform itself."
+        },
+        "aiqa.revealChatOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the AI QA chat when a window starts. Turn this off to keep the sidebar you had."
         }
       }
     },
@@ -452,6 +484,11 @@
         "command": "aiqa.openChat",
         "key": "ctrl+alt+q",
         "mac": "cmd+alt+q"
+      },
+      {
+        "command": "aiqa.openChat",
+        "key": "ctrl+shift+alt+q",
+        "mac": "cmd+shift+alt+q"
       }
     ]
   },

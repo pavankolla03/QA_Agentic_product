@@ -17,7 +17,6 @@ import { ServerManager } from './server/serverManager';
 import { AgentsProvider, ApprovalItem, ApprovalsProvider, RunsProvider } from './views/trees';
 import {
   ActivityProvider,
-  AssistantProvider,
   ConfigurationProvider,
   CostsProvider,
   FailuresProvider,
@@ -69,7 +68,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   runsProvider = new RunsProvider(api, projectId);
   agentsProvider = new AgentsProvider(api);
 
-  const assistant = new AssistantProvider(api);
   const failures = new FailuresProvider(api);
   const healing = new HealingProvider(api);
   const activity = new ActivityProvider(api);
@@ -78,10 +76,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const costs = new CostsProvider(api);
   const reports = new ReportsProvider(api);
   const configuration = new ConfigurationProvider(api);
-  panels = [assistant, failures, healing, activity, knowledge, standards, costs, reports, configuration];
+  panels = [failures, healing, activity, knowledge, standards, costs, reports, configuration];
 
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('aiqa.assistant', assistant),
     vscode.window.registerTreeDataProvider('aiqa.approvals', approvalsProvider),
     vscode.window.registerTreeDataProvider('aiqa.runs', runsProvider),
     vscode.window.registerTreeDataProvider('aiqa.failures', failures),
@@ -179,6 +176,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refreshAll();
   // An offer, not a takeover — and only while something is actually unset.
   void onboarding.offerOnce();
+
+  // Open the chat with the window. A sidebar you have to go looking for is a
+  // sidebar nobody uses, and every comparable assistant does this; the setting
+  // is there so it stays a default rather than an imposition.
+  if (config().get<boolean>('revealChatOnStartup', true)) {
+    void chat.reveal();
+  }
   output.info(`AI QA Engineer activated against ${api.baseUrl}`);
 }
 

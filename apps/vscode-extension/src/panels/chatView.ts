@@ -41,8 +41,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
     };
-    // A run outlives a glance at another panel; keep the transcript alive.
-    view.webview.options = { ...view.webview.options };
     view.description = 'QA automation';
     view.webview.html = this.html(view.webview);
     view.webview.onDidReceiveMessage((message) => void this.handleMessage(message));
@@ -55,6 +53,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** Bring the chat forward, creating it if the sidebar has not opened yet. */
   async reveal(): Promise<void> {
+    if (this.view) {
+      this.view.show?.(true);
+      return;
+    }
+    // Nothing has resolved the view yet, so there is no handle to show. The
+    // generated `<viewId>.focus` command opens the container and builds it.
     await vscode.commands.executeCommand(`${ChatViewProvider.viewType}.focus`);
   }
 

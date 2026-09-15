@@ -386,6 +386,38 @@
     scroll();
   }
 
+  /* The compile gate's verdict.
+   *
+   * `unverified` is deliberately not styled as a pass. The whole reason this
+   * card exists is that a skipped check used to report as a green one, so the
+   * three states have to look as different as they are.
+   */
+  function renderVerdict(data, message) {
+    clearWelcome();
+    const verdict = String(data.verdict || 'unverified');
+    const tone = verdict === 'passed' ? 'pass' : verdict === 'failed' ? 'fail' : 'warn';
+    const card = el('div', 'card summary ' + tone);
+    card.appendChild(el('div', 'card-title', 'Compile check — ' + verdict));
+
+    const detail =
+      verdict === 'passed'
+        ? 'The generated TypeScript compiles.'
+        : verdict === 'failed'
+          ? Number(data.errors || 0) + ' error(s); the code will not run as written.'
+          : 'Nothing compiled it. Unverified is not the same as passing — run `npm install` ' +
+            'in the project so tsc is available.';
+    card.appendChild(el('div', 'muted strategy', detail));
+
+    const ran = (data.ran || []).join(', ');
+    const skipped = Object.keys(data.skipped || {}).join(', ');
+    if (ran) card.appendChild(el('div', 'line', 'ran: ' + ran));
+    if (skipped) card.appendChild(el('div', 'line muted', 'skipped: ' + skipped));
+    if (message && !ran) card.appendChild(el('div', 'line', message));
+
+    els.timeline.appendChild(card);
+    scroll();
+  }
+
   // ------------------------------------------------------------------ //
   function handleEvent(event) {
     const agent = event.agent || '';
@@ -480,6 +512,10 @@
         addLine(agent, event.message, 'tool');
         break;
 
+      case 'compile_checked':
+        renderVerdict(event.data || {}, event.message);
+        break;
+
       case 'run_finished':
         state.running = false;
         setStatus('connected', 'finished');
@@ -495,6 +531,9 @@
         break;
 
       default:
+        // Unrecognised, but emitted for a reason. Showing it plainly beats
+        // dropping it: an event the chat has not learned yet is still news.
+        if (event.message) addLine(agent || 'orchestrator', event.message, event.level);
         break;
     }
 

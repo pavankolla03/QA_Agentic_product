@@ -9,10 +9,29 @@ rather than merely intended.
 
 ---
 
-## 0. First run
+## 0. Opening the chat
 
-Click the beaker icon. The chat is the first thing in the panel — there is no
-command to remember.
+Four ways in, from anywhere in the editor — no file has to be open and no
+command has to be remembered:
+
+| | |
+|---|---|
+| **Activity bar** | the **beaker** icon on the far left — its sidebar holds the chat and nothing else |
+| **Keyboard** | `Ctrl+Alt+Q` (`Cmd+Alt+Q` on macOS) |
+| **Editor title bar** | the beaker button at the top right of whatever file you are reading |
+| **Status bar** | `$(beaker) AI QA`, bottom right |
+
+The chat also opens with the window. If you would rather it did not, turn off
+**`aiqa.revealChatOnStartup`** in settings.
+
+> **Two icons, not one.** The beaker is the chat. The second icon, *AI QA
+> Engineer*, holds approvals, runs, failures, healing, coverage and cost.
+> They were one container until the chat became a two-line strip above eleven
+> trees — contributed, registered, resolved, and invisible.
+
+---
+
+## 0b. First run
 
 If anything is unconfigured the extension offers to set it up, and
 **AI QA: Set Up** runs the same walkthrough at any time. It checks four things
