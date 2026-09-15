@@ -29,9 +29,31 @@
 # The free catalogue churns constantly: models appear, become paid and get
 # retired, and every model in the previous version of this file had stopped
 # being free. When runs start failing for no obvious reason, re-run that script
-# and update this file. These entries were qualified on 2026-09-13.
+# and update this file.
+#
+# ── What the probe cannot tell you (learned on 2026-09-16) ──────────────────
+# The probe sends small requests, and small requests flatter a model. Every
+# entry below passes it. Under the platform's *real* prompts — a few thousand
+# tokens in, a large JSON plan out — two of them behaved completely
+# differently:
+#
+#   nvidia/nemotron-3-super-120b-a12b  writes its reasoning into `content`
+#       before the JSON. On a small probe that is 220 tokens and looks fine;
+#       on a real test-design call it exhausts the output budget, truncates,
+#       retries with more room, and turns an 18-second call into 84, then into
+#       a run that sat on one agent for twenty minutes.
+#   cohere/north-mini-code            returned a 200 with no `choices` at all
+#       under load, so code generation fell through to the deterministic
+#       scaffold and nobody could tell from the report.
+#
+# `inclusionai/ling-3.0-flash-vl` is the one that has completed every large
+# call in every observed run, so it now leads all three text tiers. The two
+# above stay as fallbacks — they are not broken, they are just not first
+# choices for structured output at size.
+#
+# Entries qualified 2026-09-13; order revised 2026-09-16 from run evidence.
 # ─────────────────────────────────────────────────────────────────────────────
-version: 3
+version: 4
 
 defaults:
   # Refuse to select any model with a non-zero price, whatever a tier lists.
@@ -40,9 +62,11 @@ defaults:
   free_only: true
   temperature: 0.1
   max_tokens: 4096
-  # Free models are markedly slower than paid ones. A timeout here is a failed
-  # run, not a cheaper one, so this is generous.
-  timeout_seconds: 300
+  # Free models are markedly slower than paid ones, so this is generous — but
+  # not unbounded. At 300s a single stalled model made the chat look frozen for
+  # five minutes before anything else was tried, and the fallback chain below
+  # only helps if it is reached while someone is still watching.
+  timeout_seconds: 150
   retries: 2
   prompt_caching: true
   cache_min_chars: 2000
@@ -52,22 +76,25 @@ defaults:
 # fallback chain matters more than usual here, because any free model can be
 # rate limited at any moment.
 routes:
+  # Led by the model that has actually finished every large structured call
+  # observed, not by the largest parameter count.
   reasoning:
-    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
-    - { provider: openrouter, model: "nex-agi/nex-n2.5-pro:free",                          in: 0, out: 0 }
+    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
     - { provider: openrouter, model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", in: 0, out: 0 }
     - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
-    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-pro:free",                          in: 0, out: 0 }
     - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
     - { provider: mock,       model: "mock-reasoning",                                     in: 0, out: 0 }
 
-  # `north-mini-code` is code-specialised and passed the code-planning probe;
-  # the 120B general model sits behind it as the strongest all-rounder.
+  # `north-mini-code` is code-specialised and passes the probe, but returned a
+  # 200 with no `choices` under a real generation prompt, which silently sent
+  # the whole agent to its deterministic fallback. It stays, one place back.
   coding:
-    - { provider: openrouter, model: "cohere/north-mini-code:free",                        in: 0, out: 0 }
-    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
-    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
     - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: openrouter, model: "cohere/north-mini-code:free",                        in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
     - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
     - { provider: mock,       model: "mock-coding",                                        in: 0, out: 0 }
 
