@@ -297,7 +297,33 @@ def parameterise(text: str) -> tuple[str, list[str]]:
         params.append(f"value{len(params) + 1}")
     del params[placeholders:]
 
-    return pattern.replace("'", "\\'"), params
+    return _escape_expression(pattern).replace("'", "\\'"), params
+
+
+# Cucumber Expressions give three characters their own meaning: `(...)` marks an
+# optional, `/` an alternation, `{}` a parameter. Prose that happens to contain
+# them is not prose to Cucumber — and the failure is not a failing test, it is a
+# parse error at load time that stops the whole suite before the first scenario.
+# One generated step read "... all required fields (Full Name, Date of Birth,
+# ID/Document Number) ..." and took every feature in the project down with it.
+_EXPRESSION_META = re.compile(r"[()/\\]")
+
+
+def _escape_expression(pattern: str) -> str:
+    """Escape Cucumber Expression syntax that came from prose, not from us.
+
+    `{string}` placeholders are ours and have to survive; everything else
+    Cucumber would read as syntax is escaped back into literal text.
+    """
+    parts = _CUCUMBER_PARAM_RE.split(pattern)
+    placeholders = _CUCUMBER_PARAM_RE.findall(pattern)
+    escaped = [_EXPRESSION_META.sub(lambda m: "\\" + m.group(0), part) for part in parts]
+
+    out = [escaped[0]]
+    for placeholder, tail in zip(placeholders, escaped[1:], strict=False):
+        out.append(placeholder)
+        out.append(tail)
+    return "".join(out)
 
 
 def render_steps(

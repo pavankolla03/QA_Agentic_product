@@ -186,6 +186,8 @@ class RepositoryMap:
     framework: str = "playwright"
     language: str = "typescript"
     bdd: bool = False
+    bdd_runnable: bool = False
+    bdd_runner: str = ""
     pom: bool = False
     package_manager: str = "npm"
     frameworks: list[str] = field(default_factory=list)
@@ -253,6 +255,8 @@ class RepositoryMap:
             language=self.language,
             test_runner=self.framework,
             bdd=self.bdd,
+            bdd_runnable=self.bdd_runnable,
+            bdd_runner=self.bdd_runner,
             package_manager=self.package_manager,
             detected_layout=dict(self.layout),
             frameworks=list(self.frameworks),
@@ -398,6 +402,8 @@ class RepositoryMapper:
             framework=framework["test_runner"],
             language=framework["language"],
             bdd=bool(framework["bdd"]),
+            bdd_runnable=bool(framework.get("bdd_runnable")),
+            bdd_runner=str(framework.get("bdd_runner", "")),
             pom=any("page" in key for key in layout),
             package_manager=framework["package_manager"],
             frameworks=list(framework["frameworks"]),

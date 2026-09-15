@@ -576,3 +576,34 @@ def test_background_steps_get_definitions() -> None:
     assert "await residentRegistrationPage.goto();" in source, (
         "the background step has to actually navigate somewhere"
     )
+
+
+def test_prose_is_not_read_as_cucumber_syntax() -> None:
+    """A parse error here stops the whole suite, not one test.
+
+    Cucumber Expressions give `(...)` and `/` their own meaning: an optional
+    and an alternation. A generated step read "... all required fields (Full
+    Name, Date of Birth, ID/Document Number) are valid" and CucumberJS refused
+    to load *any* step file — "an alternation can not be used inside an
+    optional" — so every feature in the project failed before its first
+    scenario.
+
+    Nothing upstream could see it. The TypeScript compiles, the Gherkin parses,
+    the standards pass. It only appears when a runner reads the pattern, which
+    is why it survived until the generated tests were executed for the first
+    time.
+    """
+    pattern, params = parameterise(
+        "all required fields (Full Name, Date of Birth, ID/Document Number) are valid"
+    )
+    assert r"\(" in pattern and r"\/" in pattern and r"\)" in pattern, pattern
+    assert not params
+
+    # Our own placeholders must survive the escaping.
+    pattern, params = parameterise('I set the "email/username" field to "<value>"')
+    assert pattern.count("{string}") == 2, pattern
+    assert len(params) == 2
+
+    # A backslash in prose is itself an escape character to Cucumber.
+    pattern, _ = parameterise(r"the export lands in C:\reports")
+    assert r"C:\\reports" in pattern, pattern

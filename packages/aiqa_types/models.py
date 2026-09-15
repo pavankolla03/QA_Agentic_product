@@ -146,6 +146,10 @@ class RepoProfile(Base):
     language: str = "typescript"
     test_runner: str = "playwright"
     bdd: bool = False
+    # Whether anything in the repository would actually execute a .feature file.
+    # `bdd` only says the library is installed.
+    bdd_runnable: bool = False
+    bdd_runner: str = ""
     package_manager: str = "npm"
     detected_layout: dict[str, str] = Field(default_factory=dict)
     frameworks: list[str] = Field(default_factory=list)

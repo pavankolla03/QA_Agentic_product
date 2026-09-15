@@ -154,6 +154,7 @@ class CodeGenerationAgent(BaseAgent):
             ),
         )
         ctx.code_bundle = bundle
+        self._warn_if_features_are_inert(ctx, changes)
 
         # Publish the code itself. A client that only sees "code_generation
         # finished" cannot show the engineer what was written, which is the one
@@ -237,6 +238,31 @@ class CodeGenerationAgent(BaseAgent):
             for feature in plan.features
             if feature.scenarios
         ]
+
+    # ------------------------------------------------------------------ #
+    def _warn_if_features_are_inert(self, ctx: AgentContext, changes: list[FileChange]) -> None:
+        """A .feature file nothing runs is a document, not a test.
+
+        `bdd` being true only means a BDD library is in package.json. The demo
+        repository had `@cucumber/cucumber` and `playwright-bdd` installed, no
+        runner wired to the features directory, and a `playwright test` script
+        that matched `*.spec.ts` only -- so every feature and step file the
+        platform had ever written sat there compiling cleanly and executing
+        never. It took running the suite by hand to notice.
+        """
+        profile = ctx.repo_profile
+        if profile is None or not getattr(profile, "bdd", False):
+            return
+        if getattr(profile, "bdd_runnable", False):
+            return
+        features = [c for c in changes if str(getattr(c, "path", "")).endswith(".feature")]
+        if not features:
+            return
+        ctx.warn(
+            f"{len(features)} feature file(s) written, but nothing in this repository runs them: "
+            "there is no cucumber config and the Playwright config has no defineBddConfig. "
+            "They will compile and never execute."
+        )
 
     # -- 2. the single planning call ------------------------------------ #
     async def _plan(self, ctx: AgentContext, plan: TestPlan) -> GenerationPlan:

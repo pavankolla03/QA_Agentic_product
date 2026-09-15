@@ -66,6 +66,13 @@ def detect_framework(root: Path) -> dict[str, Any]:
         "language": "typescript",
         "test_runner": "unknown",
         "bdd": False,
+        # Having a BDD library installed is not the same as being able to run a
+        # feature file, and the difference is not cosmetic: a repository with
+        # `@cucumber/cucumber` in devDependencies and no runner wiring accepts
+        # every .feature the platform writes and executes none of them. The
+        # files look finished, the compile gate passes, and nothing ever runs.
+        "bdd_runnable": False,
+        "bdd_runner": "",
         "package_manager": "npm",
         "frameworks": [],
         "config_files": [],
@@ -108,10 +115,16 @@ def detect_framework(root: Path) -> dict[str, Any]:
             info["package_manager"] = "yarn"
 
     for candidate in ("playwright.config.ts", "playwright.config.js", "cypress.config.ts",
-                      "wdio.conf.ts", "cucumber.js", "cucumber.json", "tsconfig.json",
+                      "wdio.conf.ts", "cucumber.js", "cucumber.cjs", "cucumber.mjs", "cucumber.json",
+                      "cucumber.yaml", "cucumber.yml", "tsconfig.json",
                       "pytest.ini", "pyproject.toml", "conftest.py", "pom.xml", "build.gradle"):
         if (root / candidate).exists():
             info["config_files"].append(candidate)
+
+    if info["bdd"]:
+        runner = _bdd_runner(root)
+        info["bdd_runnable"] = bool(runner)
+        info["bdd_runner"] = runner
 
     if info["test_runner"] == "unknown":
         if (root / "conftest.py").exists() or (root / "pytest.ini").exists():
@@ -122,6 +135,39 @@ def detect_framework(root: Path) -> dict[str, Any]:
             info["language"], info["test_runner"] = "java", "testng"
 
     return info
+
+
+def _bdd_runner(root: Path) -> str:
+    """Which runner, if any, would actually execute this repository's features.
+
+    Returns the runner's name, or "" when the feature files are inert. Only
+    configuration counts -- a dependency in package.json proves nothing about
+    whether anything reads the .feature directory.
+    """
+    for name in ("cucumber.js", "cucumber.cjs", "cucumber.mjs", "cucumber.json",
+                 "cucumber.yaml", "cucumber.yml", ".cucumberrc.json", ".cucumber-rc.json"):
+        if (root / name).exists():
+            return "cucumber-js"
+
+    package = root / "package.json"
+    if package.exists():
+        try:
+            data = json.loads(package.read_text(encoding="utf-8", errors="replace")) or {}
+        except json.JSONDecodeError:
+            data = {}
+        if data.get("cucumber"):
+            return "cucumber-js"
+
+    # playwright-bdd is wired inside the Playwright config, not beside it.
+    for name in ("playwright.config.ts", "playwright.config.js", "playwright.config.mjs"):
+        config = root / name
+        if config.exists() and "defineBddConfig" in config.read_text(encoding="utf-8", errors="replace"):
+            return "playwright-bdd"
+
+    # Python BDD keeps its steps next to the features by convention.
+    if (root / "features" / "steps").is_dir():
+        return "behave"
+    return ""
 
 
 def detect_layout(root: Path, parsed: list[ParsedFile]) -> dict[str, str]:
