@@ -108,6 +108,11 @@
     },
     "commands": [
       {
+        "command": "aiqa.setup",
+        "title": "Set Up",
+        "category": "AI QA"
+      },
+      {
         "command": "aiqa.openChat",
         "title": "AI QA: Open Chat",
         "icon": "$(comment-discussion)"

@@ -87,3 +87,50 @@ def test_the_webview_assets_are_present(vsix_names) -> None:
 def test_activation_is_declared(manifest) -> None:
     events = manifest.get("activationEvents") or []
     assert events, "without an activation event no command is ever registered"
+
+
+# --------------------------------------------------------------------------- #
+# The compile gate
+# --------------------------------------------------------------------------- #
+def test_a_skipped_compile_check_is_not_reported_as_a_pass() -> None:
+    """The most consequential bug in this platform's history.
+
+    `tsc --noEmit` needs files on disk; the standards agent runs before they are
+    written, so the check was skipped every time. A skipped checker contributes
+    no errors, so `error_count == 0` read as "passed" — and every run reported
+    standards green having compiled nothing. Four defects TypeScript would have
+    caught in a second shipped that way.
+    """
+    from services.execution_service.static_validation import CheckOutcome, StaticReport
+
+    unchecked = StaticReport(
+        outcomes=[
+            CheckOutcome("structure", ran=True, passed=True),
+            CheckOutcome("typescript", ran=False, skipped_reason="not run before the files exist"),
+        ]
+    )
+    assert unchecked.error_count == 0
+    assert unchecked.compiled is False
+    assert unchecked.verdict == "unverified", "a skip must never read as a pass"
+    assert "NOT compile-checked" in unchecked.summary()
+
+    checked = StaticReport(
+        outcomes=[
+            CheckOutcome("structure", ran=True, passed=True),
+            CheckOutcome("typescript", ran=True, passed=True),
+        ]
+    )
+    assert checked.verdict == "passed"
+    assert "NOT compile-checked" not in checked.summary()
+
+
+def test_the_compile_gate_runs_after_the_files_are_written() -> None:
+    """It cannot run anywhere else: tsc needs the files to exist."""
+    execution = (
+        Path(__file__).resolve().parents[2] / "agents" / "execution" / "agent.py"
+    ).read_text(encoding="utf-8")
+
+    assert "_compile_check" in execution, "nothing re-checks after the diff is applied"
+    applied = execution.index('ctx.metadata["changes_applied"] = True')
+    checked = execution.index("self._compile_check(ctx, bundle)")
+    assert applied < checked, "the check must come after the files land"

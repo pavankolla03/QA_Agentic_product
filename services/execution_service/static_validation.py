@@ -83,10 +83,29 @@ class StaticReport:
     def skipped(self) -> dict[str, str]:
         return {o.name: o.skipped_reason for o in self.outcomes if not o.ran}
 
+    @property
+    def compiled(self) -> bool:
+        """Did anything actually confirm this TypeScript compiles?
+
+        `passed` cannot answer that: a skipped checker contributes no errors, so
+        an unchecked change set and a clean one are indistinguishable by error
+        count alone. That is how four non-compiling defects shipped while every
+        run reported standards green.
+        """
+        return "typescript" in self.ran
+
+    @property
+    def verdict(self) -> str:
+        """passed | failed | unverified — never "passed" on the strength of a skip."""
+        if self.error_count:
+            return "failed"
+        return "passed" if self.compiled else "unverified"
+
     def summary(self) -> str:
         ran = ", ".join(self.ran) or "none"
         skipped = f"; skipped: {', '.join(self.skipped)}" if self.skipped else ""
-        return f"static checks [{ran}]: {self.error_count} error(s){skipped}"
+        note = "" if self.compiled else "  [NOT compile-checked]"
+        return f"static checks [{ran}]: {self.error_count} error(s){skipped}{note}"
 
 
 # =========================================================================== #

@@ -40,6 +40,7 @@ from agents.code_generation.api_renderer import (
     db_checks_from,
     render_api_tests,
     render_db_checks,
+    render_db_helper,
     spec_file_name,
 )
 from agents.code_generation.renderer import (
@@ -205,6 +206,7 @@ class CodeGenerationAgent(BaseAgent):
             "data_dir": defaults.get("data_dir", "tests/data"),
             "api_dir": defaults.get("api_dir", "tests/api"),
             "visual_dir": defaults.get("visual_dir", "tests/visual"),
+            "tests_dir": defaults.get("tests_dir", "tests"),
         }
 
     def _base_class(self, ctx: AgentContext) -> str:
@@ -400,6 +402,7 @@ class CodeGenerationAgent(BaseAgent):
                     # method's real signature or it will not compile.
                     pages=generation.pages,
                     pages_import_path=_relative_import(layout["steps_dir"], layout["pages_dir"]),
+                    existing_members=_existing_members(ctx),
                 ),
                 language="typescript",
                 rationale=f"{len(new_steps)} new step(s) bound to Page Object methods; {len(reused)} reused.",
@@ -462,16 +465,35 @@ class CodeGenerationAgent(BaseAgent):
                 f"{unparameterised} database check(s) named no table and are emitted as "
                 "test.fixme rather than as assertions that would silently pass"
             )
-        return [
+        # `tests/utils/`, not `tests/support/`: the organisation standard says a
+        # util belongs there, and the generator has to follow the rules it
+        # enforces on everyone else.
+        helper_path = str(PurePosixPath(layout["utils_dir"]) / "db.ts")
+        helper_import = _relative_import(layout["api_dir"], layout["utils_dir"]) + "/db"
+        changes = [
             FileChange(
                 path=str(PurePosixPath(layout["api_dir"]) / spec_file_name(feature, "db")),
                 change_type=ChangeType.CREATE,
                 kind=ArtifactKind.DB_CHECK,
-                content=render_db_checks(checks, suite=feature),
+                content=render_db_checks(checks, suite=feature, db_helper_import=helper_import),
                 language="typescript",
                 rationale="Asserts persisted state directly, which the UI cannot prove.",
             )
         ]
+        # Ship the stub the spec imports. Without it the missing module is a
+        # compile error for the entire project, which hides every other result.
+        if not self.tool(ctx, "fs.read_file", path=helper_path).ok:
+            changes.append(
+                FileChange(
+                    path=helper_path,
+                    change_type=ChangeType.CREATE,
+                    kind=ArtifactKind.UTIL,
+                    content=render_db_helper(),
+                    language="typescript",
+                    rationale="Throws until pointed at a test database, so a @database check cannot pass against nothing.",
+                )
+            )
+        return changes
 
     # -- 6. visual regression -------------------------------------------- #
     def _visual_changes(
@@ -541,6 +563,22 @@ class CodeGenerationAgent(BaseAgent):
 
 
 # =========================================================================== #
+def _existing_members(ctx: AgentContext) -> dict[str, set[str]]:
+    """Methods of the page objects already in the repository.
+
+    The index records them, so a call onto a reused class can be checked rather
+    than trusted. Without this a plan can reuse a real class and invent a method
+    on it, which compiles in the model's head and nowhere else.
+    """
+    if ctx.repo_profile is None:
+        return {}
+    members: dict[str, set[str]] = {}
+    for symbol in ctx.repo_profile.symbols_of("page_object"):
+        if symbol.name:
+            members[symbol.name] = set(symbol.members or [])
+    return members
+
+
 def _page_class_name(feature_name: str) -> str:
     name = pascal(feature_name)
     return name if name.endswith("Page") else name + "Page"

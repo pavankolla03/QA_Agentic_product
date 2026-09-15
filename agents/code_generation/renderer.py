@@ -306,6 +306,7 @@ def render_steps(
     *,
     pages_import_path: str = "../pages",
     bdd_import: str = "@cucumber/cucumber",
+    existing_members: dict[str, set[str]] | None = None,
 ) -> str:
     """Render a step-definition file that calls Page Object methods only.
 
@@ -316,6 +317,11 @@ def render_steps(
     that declared the argument and then never passed it.
     """
     signatures = _method_params(pages)
+    generated = {p.class_name for p in pages if not isinstance(p, str)}
+    # Methods of page objects that already exist in the repository. A plan may
+    # reuse `DashboardPage` and invent `goToResidentRegistrationPage()` on it;
+    # the class is real, the method is not, and the result does not compile.
+    known_members = {k: set(v) for k, v in (existing_members or {}).items()}
     page_names = [p if isinstance(p, str) else p.class_name for p in pages]
     used_pages = sorted({s.page for s in steps if s.page} | set(page_names))
     lines: list[str] = [
@@ -327,7 +333,12 @@ def render_steps(
         lines.append(f"import {{ {page} }} from '{pages_import_path}/{page}';")
     lines.append("")
     for page in used_pages:
-        lines.append(f"let {camel(page)}: {page};")
+        # `!` is the definite-assignment assertion, and it is required rather
+        # than decorative. Every step constructs the page lazily with `??=`, but
+        # TypeScript's flow analysis cannot see across Cucumber's callbacks, so
+        # under `strict` a plain `let x: T;` fails with TS2454 "used before
+        # being assigned" in every generated step file.
+        lines.append(f"let {camel(page)}!: {page};")
     lines.append("")
 
     for step in steps:
@@ -337,16 +348,31 @@ def render_steps(
         lines.append(f"{keyword}('{pattern}', async function ({signature}) {{")
 
         instance = camel(step.page) if step.page else ""
+        method_name = _call_name(step.call) if step.call else ""
+        invented = (
+            bool(step.call)
+            and step.page not in generated
+            and step.page in known_members
+            and method_name not in known_members[step.page]
+        )
+
         if step.setup and step.page:
             lines.append(f"  {instance} = new {step.page}(this.page);")
             lines.append(f"  await {instance}.goto();")
-        elif step.call and step.page:
+        elif step.call and step.page and not invented:
             # Cucumber runs steps in scenario order, not file order, and a
             # scenario can start on a `When`. Without this the first step to use
             # a page dereferences an undeclared variable at runtime — code that
             # compiles and then dies on the first run.
             lines.append(f"  {instance} ??= new {step.page}(this.page);")
-        if step.call and step.page:
+
+        if invented:
+            # The class is reused, the method is not its own. Saying so is more
+            # useful than either a broken call or a bare TODO.
+            available = ", ".join(sorted(known_members[step.page])[:6]) or "none"
+            lines.append(f"  // TODO(aiqa): {step.page} has no {method_name}().")
+            lines.append(f"  //   Its methods are: {available}")
+        elif step.call and step.page:
             call = _bind_call(step.call, params, signatures.get((step.page, _call_name(step.call))))
             if call is None:
                 # The method needs a value this step does not supply. Emitting

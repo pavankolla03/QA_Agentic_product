@@ -96,10 +96,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let projectId = config.get<string>('projectId', '');
 
     if (!projectId) {
-      const chosen = await vscode.commands.executeCommand<string | undefined>('aiqa.registerProject');
-      projectId = chosen ?? config.get<string>('projectId', '');
+      // Typing a prompt is a clear statement of intent, so walk the setup
+      // rather than refusing and leaving the user to work out what is missing.
+      await vscode.commands.executeCommand('aiqa.setup');
+      projectId = config.get<string>('projectId', '');
       if (!projectId) {
-        this.post({ type: 'error', message: 'No project is bound to this workspace.' });
+        this.post({
+          type: 'error',
+          message: 'No project is bound to this workspace. Run "AI QA: Set Up" to finish configuring.',
+        });
         return;
       }
     }

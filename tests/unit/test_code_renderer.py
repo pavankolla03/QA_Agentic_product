@@ -462,3 +462,50 @@ def test_a_page_without_a_base_class_provides_its_own_goto() -> None:
 def test_a_page_with_a_base_class_does_not_redeclare_goto() -> None:
     page = PagePlan(class_name="LoginPage", base_class="BasePage", methods=[])
     assert "async goto()" not in render_page_object(page)
+
+
+def test_a_method_invented_on_a_reused_page_is_not_called() -> None:
+    """The class is real; the method is not. Only `tsc` ever caught this.
+
+    A plan may reuse an existing `DashboardPage` and invent
+    `goToResidentRegistrationPage()` on it. The import resolves, the class
+    exists, and the call fails to compile.
+    """
+    steps = [
+        StepPlan(
+            text="I navigate to the registration page",
+            keyword="When",
+            page="DashboardPage",
+            call="goToResidentRegistrationPage()",
+        )
+    ]
+    source = render_steps(
+        steps,
+        ["DashboardPage"],
+        existing_members={"DashboardPage": {"expectLoaded", "openSection"}},
+    )
+
+    assert "DashboardPage has no goToResidentRegistrationPage()" in source
+    assert "Its methods are: expectLoaded, openSection" in source
+    executable = [line for line in source.splitlines() if not line.strip().startswith("//")]
+    assert not any("goToResidentRegistrationPage" in line for line in executable)
+
+
+def test_a_real_method_on_a_reused_page_is_still_called() -> None:
+    steps = [
+        StepPlan(text="the dashboard is loaded", keyword="Then",
+                 page="DashboardPage", call="expectLoaded()")
+    ]
+    source = render_steps(
+        steps, ["DashboardPage"], existing_members={"DashboardPage": {"expectLoaded"}}
+    )
+    assert "await dashboardPage.expectLoaded();" in source
+
+
+def test_page_variables_are_definitely_assigned() -> None:
+    """Under `strict`, a plain `let x: T;` fails TS2454 in every step file."""
+    page = PagePlan(class_name="LoginPage", methods=[])
+    source = render_steps(
+        [StepPlan(text="I am on login", keyword="Given", page="LoginPage", setup=True)], [page]
+    )
+    assert "let loginPage!: LoginPage;" in source

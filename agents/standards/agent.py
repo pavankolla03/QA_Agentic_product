@@ -104,6 +104,11 @@ class StandardsAgent(BaseAgent):
                 "ran": static_report.ran,
                 "skipped": static_report.skipped,
                 "errors": static_report.error_count,
+                # tsc cannot run before the files exist, so this pass is always
+                # "unverified" for TypeScript. The execution agent re-checks once
+                # they are on disk; recording the verdict keeps the distinction
+                # visible rather than letting a skip read as a pass.
+                "verdict": static_report.verdict,
             }
             ctx.note(static_report.summary())
 

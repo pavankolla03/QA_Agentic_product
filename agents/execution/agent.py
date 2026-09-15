@@ -12,6 +12,8 @@ Two ordering decisions that matter:
 
 from __future__ import annotations
 
+from typing import Any
+
 from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import (
     AgentName,
@@ -181,6 +183,61 @@ class ExecutionAgent(BaseAgent):
             )
         ctx.metadata["applied_files"] = result.data
         ctx.note(f"applied {len(result.data or [])} file(s) to {ctx.project_root}")
+
+        # The compile gate, at the only moment it can run.
+        #
+        # `tsc --noEmit` needs the files on disk, and the standards agent runs
+        # before they are written — so the check it schedules is skipped every
+        # time, and a skipped check contributed no errors, so every run reported
+        # standards green having compiled nothing. Four defects that TypeScript
+        # would have caught in a second shipped that way.
+        self._compile_check(ctx, bundle)
+
+    def _compile_check(self, ctx: AgentContext, bundle: Any) -> None:
+        """Compile what was just written, and say plainly if it does not."""
+        from services.execution_service.static_validation import StaticValidationPipeline
+
+        runner = ctx.tools.get("shell.run") if ctx.tools else None
+        if runner is None:
+            return
+        try:
+            pipeline = StaticValidationPipeline(ctx.project_root, ctx.standards, runner=runner)
+            report = pipeline.run(bundle.changes, compile_check=True)
+        except Exception as exc:  # noqa: BLE001 - a checker must not fail the run
+            ctx.warn(f"compile check could not run: {exc}")
+            return
+
+        ctx.metadata["compile_check"] = {
+            "verdict": report.verdict,
+            "ran": report.ran,
+            "skipped": report.skipped,
+            "errors": report.error_count,
+        }
+        ctx.note(report.summary())
+
+        if report.error_count:
+            # Loud, and in the run's own warnings: generated code that does not
+            # compile is the worst outcome this platform can produce, because it
+            # looks finished.
+            ctx.warn(
+                f"{report.error_count} compile/lint error(s) in the generated code — "
+                "it will not run as written"
+            )
+            for violation in report.violations[:8]:
+                ctx.warn(f"  {getattr(violation, 'file_path', '')}: {getattr(violation, 'message', violation)}")
+        elif not report.compiled:
+            ctx.warn(
+                "the generated TypeScript was NOT compile-checked "
+                f"({report.skipped.get('typescript', 'unavailable')}); it is unverified, not verified"
+            )
+
+        if ctx.tracker is not None:
+            ctx.tracker.emit(
+                "compile_checked",
+                report.summary(),
+                agent=self.name,
+                data=ctx.metadata["compile_check"],
+            )
 
     # ------------------------------------------------------------------ #
     def _selection(self, ctx: AgentContext) -> tuple[str, list[str]]:

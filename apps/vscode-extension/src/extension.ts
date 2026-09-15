@@ -12,6 +12,7 @@ import * as vscode from 'vscode';
 import { ApiClient, ApiError, Approval, RunMode } from './client/apiClient';
 import { showDiffDocument } from './panels/chatPanel';
 import { ChatViewProvider } from './panels/chatView';
+import { Onboarding } from './panels/onboarding';
 import { ServerManager } from './server/serverManager';
 import { AgentsProvider, ApprovalItem, ApprovalsProvider, RunsProvider } from './views/trees';
 import {
@@ -36,6 +37,7 @@ let output: vscode.LogOutputChannel;
 let pollTimer: NodeJS.Timeout | undefined;
 let server: ServerManager;
 let chat: ChatViewProvider;
+let onboarding: Onboarding;
 
 const config = () => vscode.workspace.getConfiguration('aiqa');
 const projectId = () => config().get<string>('projectId', '');
@@ -53,6 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // The chat is the primary surface, so it is a docked view rather than a
   // command-summoned editor tab: clicking the extension icon should land on
   // somewhere to type.
+  onboarding = new Onboarding(context, api, () => ensureServer());
   chat = new ChatViewProvider(context, api, () => refreshAll());
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chat, {
@@ -127,6 +130,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.openDashboard', () => vscode.env.openExternal(vscode.Uri.parse(api.baseUrl)));
   register('aiqa.doctor', () => doctor());
   register('aiqa.resetApiKey', () => resetApiKey());
+  register('aiqa.setup', () => onboarding.run());
   register('aiqa.startServer', () => startServer());
   register('aiqa.stopServer', () => stopServer());
   register('aiqa.restartServer', () => restartServer());
@@ -173,6 +177,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await ensureServer();
   await connectBanner();
   refreshAll();
+  // An offer, not a takeover — and only while something is actually unset.
+  void onboarding.offerOnce();
   output.info(`AI QA Engineer activated against ${api.baseUrl}`);
 }
 
