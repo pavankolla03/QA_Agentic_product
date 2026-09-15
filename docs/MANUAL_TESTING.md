@@ -242,6 +242,43 @@ TypeScript catches in a second shipped behind a green report.
 Then re-run with mode **Run Tests**, so failure analysis and self-healing have
 something real to work on.
 
+### A feature file is not a test until a runner reads it
+
+This is the part that had never been exercised, and it hid three defects.
+
+A `.feature` plus a `.steps.ts` is inert on its own. Playwright's own runner
+collects `*.spec.ts`; it has no idea the features directory exists. The demo
+project had `@cucumber/cucumber` **and** `playwright-bdd` in its
+devDependencies and no wiring between either of them and the features — so
+every file the platform had ever generated compiled cleanly and executed
+never.
+
+The demo is wired for CucumberJS now, which is the runner the generated steps
+are written for (`@cucumber/cucumber` imports, `this.page` from a World):
+
+```bash
+cd C:\Users\Pavan.Kolla\Desktop\aiqa-demo
+npm run test:bdd
+```
+
+`tests/support/world.ts` supplies `this.page` — one browser per scenario, on
+the system Chrome, because this machine has Chrome but not the Chromium build
+Playwright 1.63 expects.
+
+The platform now checks this for you. `bdd_runnable` is separate from `bdd`:
+the first asks whether any configuration would actually run a feature, the
+second only whether a library is installed. Generate features into a
+repository that cannot run them and the run says so rather than reporting
+files written and stopping there.
+
+### What running them found
+
+| defect | why nothing upstream saw it |
+|---|---|
+| Cucumber read `(...)` and `/` in step prose as syntax | the TypeScript compiles and the Gherkin parses; the error is at the runner's load time, and it kills every feature at once |
+| `Background:` steps had no definitions | Background lives on the feature, the generator only read `scenario.steps` |
+| unrecognised `When` steps all called `submit()` | it compiles, it runs, and it tests the wrong thing |
+
 ---
 
 ## Testing any page of your own

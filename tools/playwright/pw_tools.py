@@ -376,6 +376,76 @@ class RunTestsTool(Tool):
                 "(and `npx playwright install` for browsers), then re-run."
             )
 
+        # Which runner owns the tests decides everything below. Playwright's
+        # runner collects `*.spec.ts` and has no idea a features directory
+        # exists, so running it against a CucumberJS repository reports zero
+        # tests and exit 0 — a suite that "passed" without executing anything.
+        from services.knowledge_service.indexer import _bdd_runner
+
+        if _bdd_runner(root) == "cucumber-js":
+            return self._run_cucumber(root, tags, timeout)
+
+        return self._run_playwright(root, test_filter, tags, workers, retries, timeout)
+
+    # ------------------------------------------------------------------ #
+    def _run_cucumber(self, root: Path, tags: list[str] | None, timeout: int) -> ToolResult:
+        report_path = root / ".aiqa" / "cucumber.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        if report_path.exists():
+            report_path.unlink()
+
+        command = ["npx", "cucumber-js", "--format", f"json:{report_path.as_posix()}"]
+        if tags:
+            command += ["--tags", " or ".join(tags)]
+
+        result = RunCommandTool(self.ctx).run(command=command, cwd=".", timeout=timeout)
+        payload = result.data if isinstance(result.data, dict) else {}
+        stdout = payload.get("stdout", "")
+        stderr = payload.get("stderr", "")
+        exit_code = payload.get("exit_code", 1)
+
+        raw: list[dict[str, Any]] | None = None
+        if report_path.exists():
+            try:
+                loaded = json.loads(report_path.read_text(encoding="utf-8"))
+                raw = loaded if isinstance(loaded, list) else None
+            except json.JSONDecodeError:
+                raw = None
+
+        if raw is None:
+            # Cucumber refuses to start at all when a step pattern will not
+            # parse, and prints the reason rather than a report. That reason is
+            # the single most useful thing here, so it is passed through whole.
+            return ToolResult.failure(
+                f"cucumber-js produced no parseable report (exit {exit_code}). "
+                f"{(stderr or stdout).strip()[:600]}"
+            )
+
+        execution = parse_cucumber_report(
+            raw,
+            command=" ".join(command),
+            cwd=str(root),
+            exit_code=int(exit_code),
+            stdout_tail=stdout[-4000:],
+            stderr_tail=stderr[-2000:],
+        )
+        execution.report_path = str(report_path)
+        if execution.total == 0:
+            # Zero tests is never a pass. It means the features were not found,
+            # the tag filter matched nothing, or the runner is misconfigured.
+            return ToolResult.failure(
+                "cucumber-js ran and collected no scenarios. Check the `paths` in the "
+                f"cucumber config and the tag filter. {(stderr or stdout).strip()[:400]}"
+            )
+        return ToolResult.success(execution.model_dump(mode="json"),
+                                  passed=execution.passed, failed=execution.failed, total=execution.total)
+
+    # ------------------------------------------------------------------ #
+    def _run_playwright(
+        self, root: Path, test_filter: str, tags: list[str] | None,
+        workers: int, retries: int, timeout: int,
+    ) -> ToolResult:
+
         report_path = root / ".aiqa" / "results.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         if report_path.exists():
@@ -543,6 +613,99 @@ def parse_playwright_report(
         cwd=cwd,
         exit_code=exit_code,
         duration_ms=int(stats.get("duration", 0) or 0),
+        results=results,
+        stdout_tail=stdout_tail,
+        stderr_tail=stderr_tail,
+    )
+    execution.total = len(results)
+    execution.passed = sum(1 for r in results if r.status == TestStatus.PASSED)
+    execution.failed = sum(1 for r in results if r.status in (TestStatus.FAILED, TestStatus.TIMED_OUT))
+    execution.skipped = sum(1 for r in results if r.status == TestStatus.SKIPPED)
+    execution.flaky = sum(1 for r in results if r.status == TestStatus.FLAKY)
+    return execution
+
+
+def parse_cucumber_report(
+    report: list[dict[str, Any]],
+    command: str = "",
+    cwd: str = "",
+    exit_code: int = 0,
+    stdout_tail: str = "",
+    stderr_tail: str = "",
+) -> ExecutionResult:
+    """Flatten CucumberJS's JSON formatter output into :class:`ExecutionResult`.
+
+    Cucumber reports per *step*, not per test, and a scenario is only as good
+    as its worst step: one `undefined` step means the scenario never ran, which
+    is a failure and not a skip. Getting that wrong is how "the suite passed"
+    could mean "no step was implemented".
+    """
+    from packages.aiqa_types.enums import TestStatus
+
+    # Worst-first: the scenario takes the status of its worst step.
+    SEVERITY = {
+        "failed": (TestStatus.FAILED, 5),
+        "ambiguous": (TestStatus.FAILED, 5),
+        "undefined": (TestStatus.FAILED, 4),
+        "pending": (TestStatus.SKIPPED, 3),
+        "skipped": (TestStatus.SKIPPED, 2),
+        "passed": (TestStatus.PASSED, 1),
+    }
+
+    results: list[TestCaseResult] = []
+    total_ns = 0
+
+    for feature in report or []:
+        file_path = str(feature.get("uri", ""))
+        for element in feature.get("elements", []) or []:
+            if str(element.get("type", "scenario")) == "background":
+                continue
+            worst, rank = TestStatus.PASSED, 0
+            duration_ns = 0
+            message = ""
+            failed_step = ""
+            undefined: list[str] = []
+
+            for step in element.get("steps", []) or []:
+                result = step.get("result", {}) or {}
+                status_raw = str(result.get("status", "")).lower()
+                duration_ns += int(result.get("duration", 0) or 0)
+                status, severity = SEVERITY.get(status_raw, (TestStatus.FAILED, 5))
+                if status_raw == "undefined":
+                    undefined.append(f"{step.get('keyword', '')}{step.get('name', '')}".strip())
+                if severity > rank:
+                    worst, rank = status, severity
+                    message = _strip_ansi(str(result.get("error_message", "")))
+                    failed_step = f"{step.get('keyword', '')}{step.get('name', '')}".strip()
+
+            if undefined and not message:
+                # Cucumber attaches no error to an undefined step, so without
+                # this the scenario fails with an empty message and the failure
+                # analyst has nothing to work from.
+                message = "undefined step(s): " + "; ".join(undefined[:5])
+
+            total_ns += duration_ns
+            name = str(element.get("name", ""))
+            results.append(
+                TestCaseResult(
+                    test_id=_extract_test_id(name),
+                    name=name,
+                    file_path=file_path,
+                    status=worst,
+                    duration_ms=duration_ns // 1_000_000,
+                    error_message=message[:4000],
+                    error_stack=message[:6000],
+                    failed_locator=_extract_locator(message),
+                    failed_step=failed_step,
+                    tags=[str(t.get("name", "")) for t in (element.get("tags") or []) if isinstance(t, dict)],
+                )
+            )
+
+    execution = ExecutionResult(
+        command=command,
+        cwd=cwd,
+        exit_code=exit_code,
+        duration_ms=total_ns // 1_000_000,
         results=results,
         stdout_tail=stdout_tail,
         stderr_tail=stderr_tail,
