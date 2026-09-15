@@ -9,6 +9,28 @@ rather than merely intended.
 
 ---
 
+## 0. First run
+
+Click the beaker icon. The chat is the first thing in the panel — there is no
+command to remember.
+
+If anything is unconfigured the extension offers to set it up, and
+**AI QA: Set Up** runs the same walkthrough at any time. It checks four things
+in order and stops at the first it cannot satisfy:
+
+1. the control plane is running (it starts one if needed);
+2. the API key is present **and accepted** — not merely present;
+3. this workspace is registered as a project;
+4. that project has a URL for the application under test.
+
+Each of these was otherwise discovered by failing at it, which is how "nothing
+happens when I type" became a mystery rather than a message.
+
+> The key it asks for is the one `aiqa init` prints. It is **not** your
+> OpenRouter key — pasting that is refused at the prompt.
+
+---
+
 ## 1. Start the two background processes
 
 Two terminals, both from the repository root
@@ -175,8 +197,8 @@ and **AI QA: Run Exploratory Pass** in the Command Palette.
 
 ## 7. Actually run the generated tests
 
-The platform generates tests but cannot execute them until the project has its
-toolchain:
+`npm install` is not optional, and it is not only about running tests: it is
+what switches the **compile gate** on.
 
 ```bash
 cd C:\Users\Pavan.Kolla\Desktop\aiqa-demo
@@ -184,9 +206,22 @@ npm install
 npx playwright install
 ```
 
-Then re-run with mode **Run Tests**, and failure analysis and self-healing have
-something real to work on. Until then runs report *"execution blocked:
-Playwright is not installed"*, which is accurate rather than a failure.
+With `typescript` and a `tsconfig.json` present, every run compiles what it just
+wrote and reports one of three verdicts:
+
+| verdict | meaning |
+|---|---|
+| `passed` | `tsc --noEmit` ran and found nothing |
+| `failed` | it ran, and the generated code does not compile |
+| `unverified` | nothing checked — **not** the same as passing |
+
+That third row is the point. `tsc` needs the files on disk, and the standards
+agent runs before they are written, so the check was skipped on every run — and
+a skipped check contributed no errors, so it read as a pass. Four defects that
+TypeScript catches in a second shipped behind a green report.
+
+Then re-run with mode **Run Tests**, so failure analysis and self-healing have
+something real to work on.
 
 ---
 
