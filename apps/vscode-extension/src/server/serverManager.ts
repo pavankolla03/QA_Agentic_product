@@ -24,11 +24,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+/** A directory is the platform if it can serve: the entry point has to be there. */
+function isPlatformCheckout(dir: string): boolean {
+  return !!dir && fs.existsSync(path.join(dir, 'services', 'api_gateway', 'cli.py'));
+}
+
 /** How long to wait for a freshly spawned server to answer. */
 const STARTUP_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 400;
 
 export type ServerState = 'external' | 'managed' | 'stopped' | 'failed';
+
+/** Where a working platform checkout was last found, remembered per machine. */
+const REMEMBERED_ROOT = 'aiqa.platformRoot';
 
 export class ServerManager implements vscode.Disposable {
   private child: ChildProcess | undefined;
@@ -38,6 +46,7 @@ export class ServerManager implements vscode.Disposable {
   constructor(
     private readonly output: vscode.LogOutputChannel,
     private readonly baseUrl: () => string,
+    private readonly memento?: vscode.Memento,
   ) {}
 
   get status(): ServerState {
@@ -92,18 +101,19 @@ export class ServerManager implements vscode.Disposable {
       this.fail('no workspace folder is open, so there is no repository to serve from');
       return false;
     }
-    if (!fs.existsSync(path.join(cwd, 'services', 'api_gateway', 'cli.py'))) {
-      // The common case: the open workspace is the *test* repository, not this
-      // platform's checkout. Spawning python here would fail several seconds
-      // later with a ModuleNotFoundError that explains nothing, so say what is
-      // actually wrong and what to set.
+    if (!isPlatformCheckout(cwd)) {
+      // The common case, and the one that made the chat look broken: a QA
+      // engineer opens the repository they are testing, not this platform's
+      // checkout, so nothing starts and every call 404s into a dead sidebar.
       this.fail(
         `${cwd} is not an AI QA Engineer checkout, so the control plane cannot be started ` +
-          'from it. Set `aiqa.repositoryPath` to the platform directory, or start it yourself ' +
-          'with `python -m services.api_gateway.cli serve`.',
+          'from it. Run "AI QA: Set Up" to point at the platform directory, or start it ' +
+          'yourself with `python -m services.api_gateway.cli serve`.',
       );
       return false;
     }
+    // Remember it, so the next window -- any window -- starts without asking.
+    void this.memento?.update(REMEMBERED_ROOT, cwd);
     const python = this.pythonPath(cwd);
     if (!python) {
       this.fail(
@@ -211,17 +221,39 @@ export class ServerManager implements vscode.Disposable {
    */
   private repositoryRoot(): string {
     const configured = vscode.workspace.getConfiguration('aiqa').get<string>('repositoryPath', '');
-    if (configured && fs.existsSync(configured)) {
+    if (configured && isPlatformCheckout(configured)) {
       return configured;
     }
     const folders = vscode.workspace.workspaceFolders ?? [];
     for (const folder of folders) {
       // The platform checkout is identifiable: it has the service package.
-      if (fs.existsSync(path.join(folder.uri.fsPath, 'services', 'api_gateway', 'cli.py'))) {
+      if (isPlatformCheckout(folder.uri.fsPath)) {
         return folder.uri.fsPath;
       }
     }
+    // Nothing here is the platform, so fall back to wherever it was last found.
+    // This is what lets the chat work from the repository under test, which is
+    // the only workspace a QA engineer actually has open.
+    const remembered = this.memento?.get<string>(REMEMBERED_ROOT, '') ?? '';
+    if (remembered && isPlatformCheckout(remembered)) {
+      return remembered;
+    }
     return folders[0]?.uri.fsPath ?? '';
+  }
+
+  /** The directory the extension would serve from, or '' if it cannot find one. */
+  get knownPlatformRoot(): string {
+    const root = this.repositoryRoot();
+    return isPlatformCheckout(root) ? root : '';
+  }
+
+  /** Record a directory the user picked, after checking it is really one. */
+  rememberPlatformRoot(dir: string): boolean {
+    if (!isPlatformCheckout(dir)) {
+      return false;
+    }
+    void this.memento?.update(REMEMBERED_ROOT, dir);
+    return true;
   }
 
   /** Prefer a virtualenv in the repository, then the configured or system Python. */

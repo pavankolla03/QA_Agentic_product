@@ -509,3 +509,70 @@ def test_page_variables_are_definitely_assigned() -> None:
         [StepPlan(text="I am on login", keyword="Given", page="LoginPage", setup=True)], [page]
     )
     assert "let loginPage!: LoginPage;" in source
+
+
+# --------------------------------------------------------------------------- #
+# Found by running the pipeline against a real application
+# --------------------------------------------------------------------------- #
+def test_an_unrecognised_when_step_binds_to_nothing() -> None:
+    """A wrong call is worse than no call.
+
+    The fallback ended `if fill ... elif submit: call = submit()`, so every
+    `When` it did not recognise clicked the submit button. A live run turned
+    "I set the email/username field to ''" into `submit()` — four times in one
+    generated file. It compiled, and the standards agent passed it, because
+    nothing about it is malformed; it simply tests something nobody asked for.
+    """
+    scenarios = [
+        {
+            "id": "TC-1",
+            "name": "field validation",
+            "steps": [
+                {"keyword": "Given", "text": "I am on the registration page"},
+                {"keyword": "When", "text": "I wait for the spinner to disappear"},
+                {"keyword": "When", "text": "I click the Save button"},
+            ],
+        }
+    ]
+    plan = deterministic_plan("ResidentRegistrationPage", CATALOG, scenarios, route="/residents/new")
+    by_text = {s.text: s for s in plan.steps}
+
+    assert by_text["I wait for the spinner to disappear"].call == "", (
+        "an unrecognised step must not be bound to whatever action happens to exist"
+    )
+    assert by_text["I click the Save button"].call.startswith("submit("), (
+        "a step that really is a submit should still bind"
+    )
+
+    source = render_steps(plan.steps, plan.pages)
+    assert "TODO(aiqa)" in source, "the unbound step must be visible as a gap"
+
+
+def test_background_steps_get_definitions() -> None:
+    """Otherwise the suite cannot run at all.
+
+    `Background:` lives on the feature, not the scenario, and the step
+    generator only ever saw `scenario.steps`. A feature whose Background said
+    "Given I am on the login page" therefore generated no `Given` anywhere.
+    Cucumber reports that step undefined and every scenario fails before its
+    first assertion — past the compile gate, past standards, all the way to the
+    first real execution.
+    """
+    scenarios = [
+        {
+            "id": "TC-1",
+            "name": "valid registration",
+            # As the agent now assembles them: background first, then the body.
+            "steps": [
+                {"keyword": "Given", "text": "I am on the registration page"},
+                {"keyword": "When", "text": "I complete the resident details"},
+            ],
+        }
+    ]
+    plan = deterministic_plan("ResidentRegistrationPage", CATALOG, scenarios, route="/residents/new")
+    source = render_steps(plan.steps, plan.pages)
+
+    assert "Given('I am on the registration page'" in source, source
+    assert "await residentRegistrationPage.goto();" in source, (
+        "the background step has to actually navigate somewhere"
+    )

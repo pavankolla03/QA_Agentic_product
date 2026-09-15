@@ -329,6 +329,11 @@
         "command": "aiqa.resetApiKey",
         "title": "Reset API Key",
         "category": "AI QA"
+      },
+      {
+        "command": "aiqa.locatePlatform",
+        "title": "Locate Platform Folder",
+        "category": "AI QA"
       }
     ],
     "menus": {

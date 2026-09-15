@@ -30,6 +30,8 @@
     cost: 0,
     steps: new Map(),
     progressBar: null,
+    active: '',
+    runClock: null,
   };
 
   // ------------------------------------------------------------------ //
@@ -89,17 +91,58 @@
     const wrap = el('div', 'step active');
     const head = el('div', 'step-head');
     head.appendChild(el('span', null, agent.replace(/_/g, ' ')));
-    const meta = el('span', 'step-meta muted', 'working…');
+    const meta = el('span', 'step-meta muted', '0s');
     head.appendChild(meta);
     const body = el('div', 'step-body');
     wrap.appendChild(head);
     wrap.appendChild(body);
     els.timeline.appendChild(wrap);
 
-    const record = { wrap, head, meta, body };
+    // A free reasoning model can spend eighty seconds on one call. A static
+    // 'working…' through all of that is indistinguishable from a hang, which
+    // is exactly what it was being read as. A ticking clock is the cheapest
+    // honest signal that something is still happening.
+    const record = { wrap, head, meta, body, startedAt: Date.now(), note: '' };
+    record.timer = setInterval(function () {
+      const seconds = Math.round((Date.now() - record.startedAt) / 1000);
+      record.meta.textContent = record.note ? record.note + ' · ' + seconds + 's' : seconds + 's';
+    }, 1000);
     state.steps.set(agent, record);
+    state.active = agent;
     scroll();
     return record;
+  }
+
+  /* A run-level clock in the status line.
+   *
+   * Individual steps tick, but between one agent finishing and the next
+   * starting there is nothing ticking at all, and those gaps are where the
+   * chat looked dead.
+   */
+  function startRunClock() {
+    stopRunClock();
+    const began = Date.now();
+    const tick = function () {
+      const seconds = Math.round((Date.now() - began) / 1000);
+      const where = state.active ? state.active.replace(/_/g, ' ') + ' · ' : '';
+      setStatus('connected', where + seconds + 's');
+    };
+    tick();
+    state.runClock = setInterval(tick, 1000);
+  }
+
+  function stopRunClock() {
+    if (state.runClock) {
+      clearInterval(state.runClock);
+      state.runClock = null;
+    }
+  }
+
+  function stopTimer(step) {
+    if (step && step.timer) {
+      clearInterval(step.timer);
+      step.timer = null;
+    }
   }
 
   function addLine(agent, text, level) {
@@ -424,7 +467,7 @@
 
     switch (event.type) {
       case 'run_started':
-        setStatus('connected', 'running');
+        startRunClock();
         banner('');
         break;
 
@@ -447,6 +490,7 @@
       case 'agent_finished': {
         const step = stepFor(agent);
         if (step) {
+          stopTimer(step);
           step.wrap.className = 'step done';
           const data = event.data || {};
           const parts = [];
@@ -462,6 +506,7 @@
       case 'agent_suspended': {
         const step = stepFor(agent);
         if (step) {
+          stopTimer(step);
           step.wrap.className = 'step suspended';
           step.meta.textContent = 'waiting for you';
         }
@@ -471,6 +516,7 @@
       case 'agent_failed': {
         const step = stepFor(agent);
         if (step) {
+          stopTimer(step);
           step.wrap.className = 'step failed';
           step.meta.textContent = 'failed';
           step.body.appendChild(el('div', 'line error', event.message || 'failed'));
@@ -497,6 +543,13 @@
         state.tokens += Number(data.prompt_tokens || 0) + Number(data.completion_tokens || 0);
         state.cost += Number(data.cost_usd || 0);
         updateMeters();
+        // The model name is the difference between "frozen" and "waiting on a
+        // free 120B model", and the user is entitled to know which.
+        const model = String(data.model || '').split('/').pop() || '';
+        if (model) {
+          const step = stepFor(agent);
+          if (step) step.note = 'asking ' + model.replace(':free', '');
+        }
         break;
       }
 
@@ -517,6 +570,8 @@
         break;
 
       case 'run_finished':
+        state.steps.forEach(stopTimer);
+        stopRunClock();
         state.running = false;
         setStatus('connected', 'finished');
         els.cancelBtn.hidden = true;
@@ -524,6 +579,8 @@
         break;
 
       case 'run_failed':
+        state.steps.forEach(stopTimer);
+        stopRunClock();
         state.running = false;
         setStatus('error', 'failed');
         els.cancelBtn.hidden = true;

@@ -246,17 +246,27 @@ class CodeGenerationAgent(BaseAgent):
             s.name for s in (ctx.repo_profile.symbols_of("step") if ctx.repo_profile else [])
         ][:30]
 
+        background = [
+            {"keyword": s.keyword, "text": s.text} for feature in plan.features for s in feature.background
+        ]
         scenarios = [
             {
                 "id": scenario.test_id,
                 "name": scenario.name,
-                "steps": [{"keyword": s.keyword, "text": s.text} for s in scenario.steps],
+                # Background runs before every scenario, so its steps need
+                # definitions like any other. They were omitted here, which is
+                # why a feature whose Background said "Given I am on the login
+                # page" generated no Given at all: Cucumber reported the step
+                # undefined and the whole suite failed before its first
+                # assertion. It compiled, of course. Compiling was never the
+                # question.
+                "steps": [
+                    {"keyword": s["keyword"], "text": s["text"]} for s in background
+                ]
+                + [{"keyword": s.keyword, "text": s.text} for s in scenario.steps],
             }
             for feature in plan.features
             for scenario in feature.scenarios
-        ]
-        background = [
-            {"keyword": s.keyword, "text": s.text} for feature in plan.features for s in feature.background
         ]
 
         # The catalogue is the only application context the model needs. The

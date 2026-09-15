@@ -1,0 +1,38 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│ AI QA Engineer                                                          │
+│ API      http://127.0.0.1:8099/api                                      │
+│ Docs     http://127.0.0.1:8099/docs                                     │
+│ Dashboard http://127.0.0.1:8099/                                        │
+│ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
+└─────────────────────────────────────────────────────────────────────────┘
+INFO:     127.0.0.1:55818 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55819 - "POST /api/runs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:55845 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54140 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60065 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52043 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51396 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63261 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60657 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60799 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60932 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62763 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59430 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55384 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51172 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51223 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64444 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64456 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64470 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64475 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64485 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52802 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61381 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57985 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50611 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58421 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54780 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52220 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52322 - "GET /api/runs/run_31965f31ef9949fa/events HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52331 - "GET /api/runs/run_31965f31ef9949fa HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52335 - "GET /api/runs/run_31965f31ef9949fa/events HTTP/1.1" 200 OK

@@ -47,7 +47,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // The extension is useless without a control plane, so bring one up before
   // anything else tries to call it. An already-running server is left alone.
-  server = new ServerManager(output, () => api.baseUrl);
+  // `globalState`, not workspace state: the platform lives in one place on
+  // this machine, and every workspace should be able to find it.
+  server = new ServerManager(output, () => api.baseUrl, context.globalState);
   context.subscriptions.push(server);
 
   // -- sidebar ------------------------------------------------------- //
@@ -128,6 +130,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   register('aiqa.doctor', () => doctor());
   register('aiqa.resetApiKey', () => resetApiKey());
   register('aiqa.setup', () => onboarding.run());
+  register('aiqa.locatePlatform', () => locatePlatform());
   register('aiqa.startServer', () => startServer());
   register('aiqa.stopServer', () => stopServer());
   register('aiqa.restartServer', () => restartServer());
@@ -1104,6 +1107,25 @@ async function ensureServer(): Promise<boolean> {
     return true;
   }
 
+  // The usual reason, and the one that made the chat look broken: the open
+  // workspace is the repository under test, so there is no platform checkout
+  // to serve from and nothing says so. Ask once, remember for every window.
+  if (!server.knownPlatformRoot) {
+    const answer = await vscode.window.showWarningMessage(
+      'AI QA cannot find the platform checkout, so it cannot start the control plane. ' +
+        'Point it at the folder once and every window will use it.',
+      'Locate it…',
+      'Show log',
+    );
+    if (answer === 'Locate it…' && (await locatePlatform())) {
+      return ensureServer();
+    }
+    if (answer === 'Show log') {
+      output.show(true);
+    }
+    return false;
+  }
+
   // Offer the two things that actually help, rather than a bare error.
   const picked = await vscode.window.showWarningMessage(
     `AI QA cannot reach the control plane at ${api.baseUrl}.${server.error ? ` ${server.error}` : ''}`,
@@ -1117,6 +1139,29 @@ async function ensureServer(): Promise<boolean> {
     output.show(true);
   }
   return false;
+}
+
+/** Ask for the platform directory, and refuse anything that is not one. */
+async function locatePlatform(): Promise<boolean> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    openLabel: 'Use this folder',
+    title: 'Select your AI QA Engineer checkout',
+  });
+  const folder = picked?.[0]?.fsPath;
+  if (!folder) {
+    return false;
+  }
+  if (!server.rememberPlatformRoot(folder)) {
+    void vscode.window.showErrorMessage(
+      `${folder} is not an AI QA Engineer checkout — it has no services/api_gateway/cli.py.`,
+    );
+    return false;
+  }
+  output.info(`platform checkout remembered: ${folder}`);
+  return true;
 }
 
 async function startServer(): Promise<boolean> {

@@ -759,6 +759,9 @@ def _steps_from_scenarios(scenarios: list[dict[str, Any]], page: PagePlan) -> li
 
     submit = _method("action", _SUBMIT_WORDS)
     fill = _method("action", _FILL_WORDS)
+    navigate = _method("navigation", ("goto", "open", "navigate")) or _method(
+        "action", ("goto", "open", "navigate")
+    )
     assertion = next((m for m in page.methods if m.kind == "assertion"), None)
 
     steps: list[StepPlan] = []
@@ -779,11 +782,20 @@ def _steps_from_scenarios(scenarios: list[dict[str, Any]], page: PagePlan) -> li
 
             call = ""
             lowered = text.lower()
-            if current == "When":
-                if fill and any(w in lowered for w in ("complete", "fill", "enter", "provide", "details")):
+            if current == "Given" and navigate and any(
+                w in lowered for w in ("am on", "navigate", "open", "visit", "go to")
+            ):
+                call = f"{navigate.name}()"
+            elif current == "When":
+                if fill and any(w in lowered for w in ("complete", "fill", "enter", "provide", "details", "set the")):
                     call = f"{fill.name}({', '.join(fill.params)})"
-                elif submit:
+                elif submit and any(w in lowered for w in _SUBMIT_WORDS + ("sign in", "log in")):
                     call = f"{submit.name}()"
+                # Anything else gets no call at all. The previous `elif submit`
+                # bound every unrecognised When to submit(), so "I set the email
+                # field to X" clicked the Sign In button -- a test that passes
+                # for the wrong reason, or fails for one that makes no sense.
+                # An empty call renders a TODO, which is a gap someone can see.
             elif current == "Then" and assertion:
                 call = f"{assertion.name}({', '.join(assertion.params)})"
 

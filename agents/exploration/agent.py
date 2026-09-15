@@ -142,6 +142,26 @@ class ExplorationAgent(BaseAgent):
         snapshots = [PageSnapshot(**snap) for snap in data.get("snapshots", [])]
         simulated = bool(data.get("simulated", False))
 
+        # The probe reports failures inside a successful result, and they were
+        # being read as an empty crawl. A missing browser binary produced
+        # "crawled 0 page(s)" with a green tick, so every locator downstream
+        # came from nothing and nobody was told.
+        probe_errors = [str(e) for e in data.get("errors", []) if str(e).strip()]
+        browser = str(data.get("browser", "") or "")
+        if browser:
+            ctx.note(f"explored with {browser}")
+        if not snapshots:
+            detail = probe_errors[0][:200] if probe_errors else "the probe returned no pages"
+            ctx.warn(
+                f"exploration reached no pages ({detail}). Locators cannot be verified, "
+                "so anything generated from here is scaffolding, not tested automation."
+            )
+        elif probe_errors:
+            # Routes that failed individually still matter: they are the pages
+            # the plan will silently skip.
+            for problem in probe_errors[:4]:
+                ctx.warn(f"exploration: {problem[:200]}")
+
         for snapshot in snapshots:
             app_map.put_page(self._to_page_knowledge(snapshot, simulated=simulated))
         app_map.unreachable = data.get("unreachable", [])[:20]
