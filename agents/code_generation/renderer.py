@@ -665,7 +665,11 @@ def plan_from_response(
                 text=str(raw_step["text"]),
                 keyword=str(raw_step.get("keyword", "Given")).capitalize(),
                 page=page_name if page_name in known_pages else (page_name or ""),
-                call=str(raw_step.get("call", "")),
+                # `.get(k, "")` returns None when the key is present and null,
+                # and `str(None)` is "None" -- which rendered as
+                # "ResidentRegistrationPage has no None()" in three steps of one
+                # generated file. A model writing `"call": null` means no call.
+                call=str(raw_step.get("call") or ""),
                 setup=bool(raw_step.get("setup", False)),
             )
         )
