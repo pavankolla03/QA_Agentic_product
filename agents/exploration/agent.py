@@ -58,6 +58,22 @@ Never invent a locator."""
 _EXPLICIT_PATH = re.compile(r"(?<![\w/])(/[A-Za-z0-9][A-Za-z0-9._\-/]{0,60})")
 
 
+
+def _requirement_text(ctx: AgentContext) -> str:
+    """Everything the user actually wrote, for pulling explicit paths out of.
+
+    `raw_input` is the instruction verbatim, which is the only field certain to
+    still contain a path the user typed; a summary may well have paraphrased it
+    away.
+    """
+    parts = [ctx.instruction or ""]
+    requirement = ctx.requirement
+    if requirement is not None:
+        parts += [requirement.raw_input, requirement.summary, *requirement.preconditions]
+        parts += [criterion.text for criterion in requirement.acceptance_criteria]
+    return " ".join(part for part in parts if part)
+
+
 def _explicit_paths(text: str) -> list[str]:
     """Paths named outright in the request, in the order they appear."""
     seen: set[str] = set()
@@ -315,7 +331,7 @@ class ExplorationAgent(BaseAgent):
         the *words* — while never visiting the path in the sentence is a
         strange way to treat the one piece of certain information available.
         """
-        explicit = _explicit_paths(f"{ctx.instruction} {ctx.requirement.description if ctx.requirement else ''}")
+        explicit = _explicit_paths(_requirement_text(ctx))
         routes: list[str] = [*explicit, "/"]
         title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
         words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
