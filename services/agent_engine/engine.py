@@ -278,6 +278,43 @@ class AgentEngine:
 
         return done
 
+    # ------------------------------------------------------------------ #
+    def reconcile_interrupted_runs(self) -> int:
+        """Fail runs whose process is gone. Returns how many.
+
+        A run lives in two places: a row in the database and a task in this
+        process. Stop the process — a restart, a crash, a closed laptop — and
+        the row is left saying `running` with nothing behind it. The sidebar
+        then shows a run that will never finish and the chat can attach to a
+        stream that will never emit, which looks exactly like the product
+        hanging.
+
+        This is called once at startup, when by definition no run is in flight,
+        so anything the database still believes is running is a leftover.
+        """
+        stale = 0
+        try:
+            with session_scope() as session:
+                rows = list(
+                    session.execute(
+                        select(RunRow).where(
+                            RunRow.status.in_([RunStatus.RUNNING.value, RunStatus.QUEUED.value])
+                        )
+                    ).scalars()
+                )
+                for row in rows:
+                    row.status = RunStatus.FAILED.value
+                    row.error = "interrupted — the control plane restarted while this run was in flight"
+                    row.finished_at = _utcnow()
+                    stale += 1
+        except Exception:  # noqa: BLE001 - startup bookkeeping must not stop the server
+            log.exception("could not reconcile interrupted runs")
+            return 0
+        if stale:
+            log.warning("marked %d interrupted run(s) as failed", stale)
+        return stale
+
+
     def _mark_failed(self, run_id: str, error: str) -> None:
         """Record a terminal failure for a run that never got to persist one."""
         try:

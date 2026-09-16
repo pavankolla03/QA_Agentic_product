@@ -95,6 +95,9 @@ async def lifespan(app: FastAPI):
     init_db()
     info = bootstrap_admin()
     app.state.engine = get_engine()
+    # Nothing is in flight at startup, so anything the database still calls
+    # running is a leftover from a process that is gone.
+    app.state.engine.reconcile_interrupted_runs()
     app.state.router = ModelRouter()
     if info.get("created") == "true":
         log.warning(
