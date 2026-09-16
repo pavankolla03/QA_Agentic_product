@@ -99,6 +99,18 @@ _PRODUCT_SIGNALS = re.compile(
 _DETERMINISTIC_TRUST = 0.75
 
 
+def _repairable_path(case: TestCaseResult) -> str:
+    """The file a repair actually belongs in.
+
+    `case.file_path` identifies the test. Under Cucumber that is the .feature,
+    and the healer took it literally: it appended a TypeScript step definition
+    to the bottom of a Gherkin file, which then failed to parse and took the
+    whole suite with it. The runner knows where the step's code lives; use that
+    when it does.
+    """
+    return case.code_path or case.file_path
+
+
 class FailureAnalysisAgent(BaseAgent):
     name = AgentName.FAILURE_ANALYSIS
     capability = Capability.REASONING
@@ -131,7 +143,7 @@ class FailureAnalysisAgent(BaseAgent):
             if analysis is None:
                 analysis = FailureAnalysis(
                     run_id=ctx.run_id, test_id=case.test_id or case.name, test_name=case.name,
-                    file_path=case.file_path, category=FailureCategory.UNKNOWN, confidence=0.2,
+                    file_path=_repairable_path(case), category=FailureCategory.UNKNOWN, confidence=0.2,
                     root_cause="Could not determine a root cause from the available output.",
                     recommended_action="Inspect the trace/screenshot manually.",
                 )
@@ -178,7 +190,7 @@ class FailureAnalysisAgent(BaseAgent):
                 run_id=ctx.run_id,
                 test_id=case.test_id or case.name,
                 test_name=case.name,
-                file_path=case.file_path,
+                file_path=_repairable_path(case),
                 category=category,
                 confidence=confidence,
                 root_cause=_root_cause_for(category, case),
@@ -207,7 +219,7 @@ class FailureAnalysisAgent(BaseAgent):
         user = "\n".join(
             [
                 f"Test: {case.test_id or case.name}",
-                f"File: {case.file_path}",
+                f"File: {_repairable_path(case)}",
                 f"Status: {case.status.value} after {case.retries} retry/retries ({case.duration_ms} ms)",
                 f"Failing step: {case.failed_step or 'unknown'}",
                 f"Failing locator: {case.failed_locator or 'none extracted'}",
@@ -244,7 +256,7 @@ class FailureAnalysisAgent(BaseAgent):
             run_id=ctx.run_id,
             test_id=case.test_id or case.name,
             test_name=case.name,
-            file_path=case.file_path,
+            file_path=_repairable_path(case),
             category=category,
             confidence=_clamp(raw.get("confidence"), 0.5),
             root_cause=str(raw.get("root_cause", ""))[:1500] or (prior.root_cause if prior else ""),

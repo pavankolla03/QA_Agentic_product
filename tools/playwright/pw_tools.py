@@ -394,7 +394,13 @@ class RunTestsTool(Tool):
         if report_path.exists():
             report_path.unlink()
 
-        command = ["npx", "cucumber-js", "--format", f"json:{report_path.as_posix()}"]
+        # A *relative* path, deliberately. Cucumber splits `--format` on the
+        # first colon, so an absolute Windows path makes `json:C:/Users/...`
+        # parse as the formatter "json", the target "C", and then a third part
+        # it refuses: "each part of a user-specified format should be quoted".
+        # Quoting cannot help here -- the args never reach a shell.
+        relative = report_path.relative_to(root).as_posix()
+        command = ["npx", "cucumber-js", "--format", f"json:{relative}"]
         if tags:
             command += ["--tags", " or ".join(tags)]
 
@@ -647,7 +653,11 @@ def parse_cucumber_report(
         "failed": (TestStatus.FAILED, 5),
         "ambiguous": (TestStatus.FAILED, 5),
         "undefined": (TestStatus.FAILED, 4),
-        "pending": (TestStatus.SKIPPED, 3),
+        # Cucumber's own `--strict`, the default, fails a run on pending, and
+        # it is right to: a pending step is work that was never done, and the
+        # scenario carrying it verified nothing. Counting it as a skip let a
+        # suite report "2 passed, 0 failed" while a third of it had never run.
+        "pending": (TestStatus.FAILED, 3),
         "skipped": (TestStatus.SKIPPED, 2),
         "passed": (TestStatus.PASSED, 1),
     }
@@ -664,6 +674,7 @@ def parse_cucumber_report(
             duration_ns = 0
             message = ""
             failed_step = ""
+            code_path = ""
             undefined: list[str] = []
 
             for step in element.get("steps", []) or []:
@@ -677,6 +688,16 @@ def parse_cucumber_report(
                     worst, rank = status, severity
                     message = _strip_ansi(str(result.get("error_message", "")))
                     failed_step = f"{step.get('keyword', '')}{step.get('name', '')}".strip()
+                    # Cucumber records which step definition matched, as
+                    # `path:line`. That file is where a repair belongs.
+                    location = str((step.get("match") or {}).get("location", ""))
+                    code_path = location.rsplit(":", 1)[0] if location else ""
+
+            if worst == TestStatus.FAILED and not message and not undefined:
+                # A pending step carries no error either. Say what happened,
+                # because "failed" with an empty message is unhelpful to the
+                # failure analyst and alarming to everyone else.
+                message = f"step not implemented (pending): {failed_step}"
 
             if undefined and not message:
                 # Cucumber attaches no error to an undefined step, so without
@@ -697,6 +718,7 @@ def parse_cucumber_report(
                     error_stack=message[:6000],
                     failed_locator=_extract_locator(message),
                     failed_step=failed_step,
+                    code_path=code_path,
                     tags=[str(t.get("name", "")) for t in (element.get("tags") or []) if isinstance(t, dict)],
                 )
             )

@@ -283,18 +283,23 @@ class ExecutionAgent(BaseAgent):
                         )
                     ).scalar_one_or_none()
                     if row is None:
+                        # `default=0` on the column is applied at flush, so a
+                        # freshly constructed row has `runs = None` and `+= 1`
+                        # raises. The ledger then silently never recorded
+                        # anything for a test's first run -- which is every
+                        # test, the first time it matters.
                         row = FlakyTestRow(
                             project_id=ctx.project.id, test_id=key, test_name=case.name,
-                            file_path=case.file_path,
+                            file_path=case.file_path, runs=0, failures=0, flakes=0, heals=0,
                         )
                         session.add(row)
-                    row.runs += 1
+                    row.runs = (row.runs or 0) + 1
                     row.test_name = case.name or row.test_name
                     row.file_path = case.file_path or row.file_path
                     if case.status == TestStatus.FLAKY:
-                        row.flakes += 1
+                        row.flakes = (row.flakes or 0) + 1
                     elif case.status in (TestStatus.FAILED, TestStatus.TIMED_OUT):
-                        row.failures += 1
+                        row.failures = (row.failures or 0) + 1
         except Exception as exc:  # noqa: BLE001 - bookkeeping must not fail a run
             ctx.warn(f"could not update the flakiness ledger: {exc}")
 

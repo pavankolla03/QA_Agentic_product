@@ -51,6 +51,15 @@ Reply with ONE JSON object:
 `old_snippet` MUST be copied character-for-character from the source you were given."""
 
 
+#: Things that appear in TypeScript and never in Gherkin. A Gherkin step is
+#: prose; the moment a snippet carries one of these it is code.
+_CODE_MARKERS = re.compile(r"(=>|\bawait\b|\bfunction\b|\bconst\b|\blet\b|\bimport\b|\bexport\b|\bclass\b|\breturn\b|[{};])")
+
+
+def _is_code(snippet: str) -> bool:
+    return bool(_CODE_MARKERS.search(snippet or ""))
+
+
 class SelfHealingAgent(BaseAgent):
     name = AgentName.SELF_HEALING
     capability = Capability.REASONING
@@ -247,6 +256,19 @@ class SelfHealingAgent(BaseAgent):
 
     # ------------------------------------------------------------------ #
     def _apply(self, ctx: AgentContext, proposal: HealProposal) -> bool:
+        if _is_code(proposal.new_snippet) and proposal.file_path.endswith(".feature"):
+            # A .feature is Gherkin. Writing TypeScript into one is never a
+            # repair, and the failure mode is total: the file stops parsing and
+            # every scenario in the project goes down with it. This happened —
+            # the healer appended a correct-looking step definition to the
+            # bottom of a feature file, because the failure it was handed
+            # identified the test by its .feature path.
+            ctx.warn(
+                f"{proposal.test_id}: refusing to write code into {proposal.file_path} — "
+                "a repair belongs in the step definition, not the feature file"
+            )
+            return False
+
         read = self.tool(ctx, "fs.read_file", path=proposal.file_path)
         if not read.ok or proposal.old_snippet not in read.data:
             ctx.warn(f"{proposal.test_id}: file changed since the proposal was made — skipping")

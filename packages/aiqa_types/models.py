@@ -425,6 +425,10 @@ class TestCaseResult(Base):
     error_stack: str = ""
     failed_step: str = ""
     failed_locator: str = ""
+    #: The file holding the *code* for the failing step, when the runner knows
+    #: it. For BDD, `file_path` is the .feature -- which identifies the test and
+    #: is the wrong thing to edit: a repair belongs in the step definition.
+    code_path: str = ""
     screenshot_path: str | None = None
     video_path: str | None = None
     trace_path: str | None = None

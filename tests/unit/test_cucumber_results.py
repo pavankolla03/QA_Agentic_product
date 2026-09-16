@@ -104,3 +104,31 @@ def test_durations_come_back_in_milliseconds() -> None:
 def test_an_empty_report_is_not_a_passing_suite() -> None:
     execution = parse_cucumber_report([], exit_code=0)
     assert execution.total == 0 and execution.passed == 0
+
+
+def test_pending_is_a_failure_not_a_skip() -> None:
+    """Cucumber's own `--strict` -- the default -- fails a run on pending.
+
+    A pending step is work that was never done, so the scenario carrying it
+    verified nothing. Counting it as a skip let a real suite report "2 passed,
+    0 failed" while a third of it had never run, and the platform reported the
+    whole run as succeeded.
+    """
+    report = _feature(
+        {
+            "type": "scenario",
+            "name": "TC-LOGI-001 session persists",
+            "steps": [
+                _step("I am on the login page", "passed"),
+                _step("I reload the page", "pending"),
+                _step("I should see the dashboard", "skipped"),
+            ],
+        }
+    )
+    execution = parse_cucumber_report(report, exit_code=1)
+
+    assert execution.failed == 1 and execution.passed == 0
+    case = execution.results[0]
+    assert case.status == TestStatus.FAILED
+    assert "pending" in case.error_message, "a bare 'failed' with no message helps nobody"
+    assert "I reload the page" in case.error_message
