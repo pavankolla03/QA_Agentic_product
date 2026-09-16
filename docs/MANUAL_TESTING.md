@@ -450,3 +450,42 @@ reports which return usable JSON. Update `configs/models.yaml` from its output.
   paid ones, so two runs of the same instruction can differ more than you would
   expect. The deterministic parts — rendering, validation, locator binding — do
   not vary.
+
+---
+
+## The loop, verified end to end
+
+On 2026-09-16 the whole chain ran against the demo app for the first time.
+Every stage below is a real event from a real run, not a description of intent:
+
+```
+executed 3 test(s): 2 passed, 1 failed, 0 skipped, 0 flaky in 9.1s
+  FAIL TC-LOGI-001: step not implemented (pending): When I reload the page
+analysed 1 failure(s): test_logic_error=1; 1 healable, 0 suspected product defect(s)
+self_healing: applied 1 repair(s); re-running to verify
+TC-LOGI-001: repair verified — test now passes
+report ready: 3/3 tests passing (100.0%) · 1 test(s) self-healed
+```
+
+The repair it wrote:
+
+```ts
+When('I reload the page', async function () {
+  await this.page.reload();
+});
+```
+
+Confirmed independently afterwards with `npm run test:bdd` — 3 scenarios, 3
+passed, exit 0.
+
+**Getting there took six defects that only running the tests could expose.**
+Each one produced a green report while doing nothing:
+
+| defect | what it claimed |
+|---|---|
+| `npx` is a `.CMD`, and `CreateProcess` ignores PATHEXT | `tsc`, `eslint` and every test runner "passed" without starting |
+| a check with no `exit_code` read as clean | "0 errors" on a file with two |
+| Cucumber read `(...)` and `/` in step prose as syntax | every feature in the project failed to load at once |
+| `Background:` steps had no definitions | scenarios died before their first assertion |
+| a `TODO` step body does nothing, and doing nothing passes | "3 scenarios (3 passed)" with a step that was never written |
+| the healer appended TypeScript to a `.feature` | a correct repair in a file that then stopped parsing |

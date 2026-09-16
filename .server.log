@@ -1,0 +1,14 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│ AI QA Engineer                                                          │
+│ API      http://127.0.0.1:8099/api                                      │
+│ Docs     http://127.0.0.1:8099/docs                                     │
+│ Dashboard http://127.0.0.1:8099/                                        │
+│ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
+└─────────────────────────────────────────────────────────────────────────┘
+INFO:     127.0.0.1:56206 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56207 - "POST /api/runs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:56208 - "GET /api/runs/run_dbb3cfce333145c3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56216 - "GET /api/runs/run_dbb3cfce333145c3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55768 - "GET /api/runs/run_dbb3cfce333145c3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57046 - "GET /api/runs/run_dbb3cfce333145c3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57047 - "GET /api/runs/run_dbb3cfce333145c3/events HTTP/1.1" 200 OK
