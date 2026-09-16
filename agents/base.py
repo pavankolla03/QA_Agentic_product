@@ -134,7 +134,12 @@ class AgentContext:
 #: Upper bound for a retry that widens the output ceiling. Free models advertise
 #: large contexts but are slow, and an unbounded retry turns one bad reply into
 #: a multi-minute stall.
-_MAX_OUTPUT_TOKENS = 12000
+#:
+#: 12,000 was too tight to be useful: code generation asks for 10,000, so the
+#: retry it triggers got 20% more room and truncated again — two slow calls to
+#: arrive at the deterministic scaffold anyway. A retry that cannot plausibly
+#: fit the answer is worse than no retry at all.
+_MAX_OUTPUT_TOKENS = 24000
 
 
 class BaseAgent(abc.ABC):
