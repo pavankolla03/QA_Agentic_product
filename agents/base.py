@@ -11,6 +11,7 @@ from __future__ import annotations
 import abc
 import json
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -141,6 +142,13 @@ class AgentContext:
 #: fit the answer is worse than no retry at all.
 _MAX_OUTPUT_TOKENS = 24000
 
+#: How long one agent may spend *retrying* before it settles for the fallback.
+#: Not a cap on a single call — a slow model finishing its answer is work, and
+#: the request timeout already scales with how much output was asked for. This
+#: bounds the multiplication: retries x a growing timeout is otherwise ten
+#: minutes on one step with nothing on screen.
+_AGENT_WALL_CLOCK_BUDGET = 360
+
 
 class BaseAgent(abc.ABC):
     """One responsibility, one agent."""
@@ -234,7 +242,20 @@ class BaseAgent(abc.ABC):
         attempt_system = system
         attempt_tokens = max_tokens
         last_text = ""
+        deadline = time.monotonic() + _AGENT_WALL_CLOCK_BUDGET
         for attempt in range(retries + 1):
+            if attempt and time.monotonic() > deadline:
+                # Retries multiply: three attempts at a timeout that scales with
+                # the requested output is ten minutes on one agent, and a chat
+                # that shows nothing for ten minutes is a chat that is broken as
+                # far as anyone using it is concerned. The fallback is worse
+                # output, available now, and clearly labelled — which beats
+                # better output nobody waited for.
+                ctx.warn(
+                    f"{self.name.value}: gave up after "
+                    f"{_AGENT_WALL_CLOCK_BUDGET // 60} minute(s) of retries; using the fallback"
+                )
+                break
             response = await self.ask(
                 ctx, attempt_system, user, task=task, json_mode=True,
                 capability=capability, max_tokens=attempt_tokens,
