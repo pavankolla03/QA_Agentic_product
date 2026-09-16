@@ -302,6 +302,11 @@ _QUOTED_RE = re.compile(r"['\"]([^'\"]+)['\"]")
 _CUCUMBER_PARAM_RE = re.compile(r"\{(?:string|int|float|word)\}")
 _ANGLE_RE = re.compile(r"<([^>]+)>")
 
+#: Anything of the shape `{name}`. Cucumber knows four types out of the box;
+#: everything else is a parameter type nobody registered.
+_ANY_PARAM_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_BUILTIN_PARAM_TYPES = {"string", "int", "float", "word"}
+
 
 def parameterise(text: str) -> tuple[str, list[str]]:
     """Turn quoted values and `<placeholders>` into Cucumber parameters."""
@@ -329,6 +334,23 @@ def parameterise(text: str) -> tuple[str, list[str]]:
     # parameter is recorded. Cucumber then passes an argument to a callback
     # declared with none. The pattern is the contract, so the declared
     # parameters are reconciled to it.
+    # A model writing `{field}` means "a value goes here", not "look up the
+    # parameter type named field" — there is no such type, and Cucumber answers
+    # by simply not matching the step. A whole Scenario Outline came back as
+    # undefined that way, with nothing to say why. Names are kept as the
+    # argument's name, which reads better than `value1`.
+    named: list[str] = []
+
+    def _normalise_type(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name in _BUILTIN_PARAM_TYPES:
+            return match.group(0)
+        named.append(safe_identifier(name))
+        return "{string}"
+
+    pattern = _ANY_PARAM_RE.sub(_normalise_type, pattern)
+    params.extend(named)
+
     placeholders = len(_CUCUMBER_PARAM_RE.findall(pattern))
     while len(params) < placeholders:
         params.append(f"value{len(params) + 1}")

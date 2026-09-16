@@ -737,3 +737,32 @@ def test_a_plan_without_collisions_is_left_alone() -> None:
     source = render_page_object(plan)
     assert "private get username()" in source
     assert "usernameField" not in source
+
+
+def test_an_unregistered_parameter_type_becomes_a_string() -> None:
+    """Cucumber knows four parameter types; `{field}` is not one of them.
+
+    A model writing `{field}` means "a value goes here", not "look up the
+    parameter type named field". Cucumber answers by simply not matching the
+    step, so a whole Scenario Outline came back `undefined` with nothing said
+    about why.
+    """
+    pattern, params = parameterise("I submit the form with an empty {field}")
+    assert pattern == "I submit the form with an empty {string}"
+    assert params == ["field"], "the name is worth keeping — it reads better than value1"
+
+    pattern, params = parameterise("I set {field} to {value}")
+    assert pattern == "I set {string} to {string}"
+    assert params == ["field", "value"]
+
+
+def test_the_built_in_parameter_types_are_left_alone() -> None:
+    for text, expected in (
+        ("I see {int} results", "I see {int} results"),
+        ("I wait {float} seconds", "I wait {float} seconds"),
+        ("I type {word} here", "I type {word} here"),
+        ("I type {string} here", "I type {string} here"),
+    ):
+        pattern, params = parameterise(text)
+        assert pattern == expected
+        assert len(params) == 1, "a placeholder still declares an argument"
