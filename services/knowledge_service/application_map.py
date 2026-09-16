@@ -205,6 +205,11 @@ class ApplicationMap:
     components: dict[str, dict[str, Any]] = field(default_factory=dict)
     navigation: list[dict[str, str]] = field(default_factory=list)
     unreachable: list[str] = field(default_factory=list)
+    #: Routes that turned out to be another route's page — usually a catch-all
+    #: handler answering 200 to a candidate path the crawler proposed. Kept so
+    #: exploration does not re-crawl them, and so "why is /valid not a page?"
+    #: has an answer, but never offered as a page anything can be bound to.
+    aliases: dict[str, str] = field(default_factory=dict)
 
     # ------------------------------------------------------------------ #
     @classmethod
@@ -246,7 +251,9 @@ class ApplicationMap:
 
     # ------------------------------------------------------------------ #
     def page(self, route: str) -> PageKnowledge | None:
-        raw = self.pages.get(route)
+        # An alias is a real path that reaches a page we already hold, so a
+        # lookup for it should succeed — it just must not be a *separate* page.
+        raw = self.pages.get(route) or self.pages.get(self.aliases.get(route, ""))
         if not raw:
             return None
         try:
@@ -255,6 +262,18 @@ class ApplicationMap:
             return None
 
     def put_page(self, page: PageKnowledge) -> None:
+        # Two routes serving byte-identical DOM are one page. The crawler
+        # proposes candidate routes from the words in the instruction --
+        # /automation, /form, /valid -- and an application that answers 200 to
+        # everything accepts all of them. One demo map held 25 "routes" of
+        # which 21 were the same login page, so a registration Page Object was
+        # bound to the login form's fields and every generated method filled
+        # username and password. An alias is not a page.
+        twin = self._route_with_same_dom(page)
+        if twin is not None:
+            self.aliases[page.route] = twin
+            return
+
         existing = self.page(page.route)
         if existing is not None:
             page.visit_count = existing.visit_count + 1
@@ -281,6 +300,20 @@ class ApplicationMap:
 
     def known_routes(self) -> list[str]:
         return sorted(self.pages)
+
+    def _route_with_same_dom(self, page: PageKnowledge) -> str | None:
+        """The route already holding this exact DOM, if another one does.
+
+        Only an exact hash counts. Two genuinely different pages that happen to
+        look similar must stay separate, and a page whose DOM is empty tells us
+        nothing at all.
+        """
+        if not page.dom_hash:
+            return None
+        for route, known in self.pages.items():
+            if route != page.route and known.get("dom_hash") == page.dom_hash:
+                return route
+        return None
 
     # ------------------------------------------------------------------ #
     def needs_exploration(

@@ -132,7 +132,13 @@ def render_page_object(plan: PagePlan, *, unverified: set[str] | None = None) ->
     if plan.description:
         lines.append(f"// {plan.description}")
 
-    needs_expect = any(m.kind == "assertion" for m in plan.methods)
+    # Whether `expect` is imported has to follow what the bodies actually say,
+    # not what the methods claim to be. An assertion method whose element was
+    # never verified renders a TODO and no assertion at all, so declaring it an
+    # assertion imported `expect` into a file that never called it -- which
+    # eslint flags the moment anyone turns it on.
+    bodies = {m.name: _render_method_body(m, plan) for m in plan.methods}
+    needs_expect = any("expect(" in line for body in bodies.values() for line in body)
     playwright_imports = ["expect"] if needs_expect else []
     if not plan.base_class:
         playwright_imports.insert(0, "Page")
@@ -185,7 +191,7 @@ def render_page_object(plan: PagePlan, *, unverified: set[str] | None = None) ->
         if method.intent:
             lines.append(f"  /** {method.intent} */")
         lines.append(f"  {method.signature} {{")
-        body = _render_method_body(method, plan)
+        body = bodies[method.name]
         lines.extend(f"    {line}" if line else "" for line in body)
         lines.append("  }")
         lines.append("")
@@ -326,6 +332,39 @@ def _escape_expression(pattern: str) -> str:
     return "".join(out)
 
 
+def _resolve_page(step: StepPlan, real_classes: set[str]) -> StepPlan:
+    """Point a step at a class that exists, or at none at all.
+
+    A model happily binds one step to `Residents` and the next to
+    `ResidentsPage` while only one of them is ever generated. The step file
+    then imports a module that was never written, and the whole file fails to
+    compile -- taking every step in it down, not just the mistaken one.
+    """
+    if not step.page or step.page in real_classes:
+        return step
+
+    # `Residents` -> `ResidentsPage` is the overwhelmingly common near-miss:
+    # the suffix is a house convention the model half-remembers.
+    for candidate in (f"{step.page}Page", step.page.removesuffix("Page")):
+        if candidate and candidate in real_classes:
+            step.page = candidate
+            return step
+
+    lowered = {name.lower(): name for name in real_classes}
+    match = lowered.get(step.page.lower()) or lowered.get(f"{step.page}page")
+    if match:
+        step.page = match
+        return step
+
+    # Nothing plausible. Dropping the binding renders a pending step, which is
+    # a gap someone can see; importing a module that does not exist is a file
+    # nobody can run.
+    step.page = ""
+    step.call = ""
+    step.setup = False
+    return step
+
+
 def render_steps(
     steps: list[StepPlan],
     pages: list[str] | list[PagePlan],
@@ -348,6 +387,14 @@ def render_steps(
     # reuse `DashboardPage` and invent `goToResidentRegistrationPage()` on it;
     # the class is real, the method is not, and the result does not compile.
     known_members = {k: set(v) for k, v in (existing_members or {}).items()}
+
+    # A step may name a class that does not exist. One plan bound some steps to
+    # `Residents` and others to `ResidentsPage`, generated only the latter, and
+    # the step file imported `../pages/Residents` -- a module that was never
+    # written, which fails the whole file rather than the one mistaken step.
+    real_classes = {p if isinstance(p, str) else p.class_name for p in pages} | set(known_members)
+    steps = [_resolve_page(step, real_classes) for step in steps]
+
     # Only what the steps in *this file* actually touch. Importing every page
     # the plan mentioned left `LoginPage` imported and `loginPage` declared in
     # a file that never referred to either -- dead code that any linter with
