@@ -138,6 +138,17 @@ class CodeGenerationAgent(BaseAgent):
 
         # Attach diffs so review is meaningful.
         for change in changes:
+            # Ask whether the file is there before reading it. Reading a path
+            # that is *expected* to be absent — most generated files are new —
+            # recorded six `fs.read_file → failed` traces in a perfectly
+            # healthy run. The event log is what the engineer reads to decide
+            # whether to trust the output, and a run that cries wolf about its
+            # own successes is not one anybody reads twice.
+            # `fs.exists` answers with the boolean in `data`; the call itself
+            # succeeds either way, which is the whole point of using it here.
+            if not self.tool(ctx, "fs.exists", path=change.path).data:
+                change.diff = make_diff(change.path, "", change.content)
+                continue
             existing = self.tool(ctx, "fs.read_file", path=change.path)
             if existing.ok and isinstance(existing.data, str):
                 change.original_content = existing.data

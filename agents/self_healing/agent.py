@@ -158,7 +158,14 @@ class SelfHealingAgent(BaseAgent):
                 "Propose the minimal repair.",
             ]
         )
-        raw = await self.ask_json(ctx, SYSTEM, user, task="self_healing.propose", fallback=None, max_tokens=2000)
+        # A repair has to quote `old_snippet` character-for-character and give
+        # the replacement in full, so the reply is roughly twice the size of the
+        # code being changed. At 2,000 a step-definition repair truncated,
+        # burned a second slow call on the retry, and fell through to the
+        # deterministic path anyway.
+        raw = await self.ask_json(
+            ctx, SYSTEM, user, task="self_healing.propose", fallback=None, max_tokens=6000
+        )
         if not isinstance(raw, dict):
             return None
 
