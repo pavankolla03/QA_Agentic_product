@@ -296,9 +296,26 @@ class SelfHealingAgent(BaseAgent):
         result = self.tool(ctx, "playwright.run_tests", test_filter=target, timeout=600)
 
         if not result.ok:
-            ctx.warn(f"could not verify the repairs ({result.error[:200]}); leaving them for human review")
+            # A repair whose effect cannot be observed has not earned its place.
+            # Leaving it "for human review" left a workspace whose suite would
+            # no longer load at all — the runner could not even parse the file
+            # the healer had just written, so every test in the project was
+            # gone. This module promises that the worst case is "no change";
+            # that promise is only kept if an unverifiable repair comes out.
+            ctx.warn(
+                f"could not verify the repairs ({result.error[:200]}) — reverting them. "
+                "A repair that cannot be re-run is not a repair."
+            )
             for proposal in applied:
+                revert = self.tool(
+                    ctx, "fs.write_file", path=proposal.file_path,
+                    content=self._reverted_content(ctx, proposal),
+                )
                 proposal.verified = False
+                proposal.reverted = bool(revert.ok)
+                if not revert.ok:
+                    ctx.warn(f"{proposal.test_id}: COULD NOT REVERT, manual cleanup needed")
+                self._record(ctx, proposal, update=True)
             return
 
         from packages.aiqa_types.models import ExecutionResult

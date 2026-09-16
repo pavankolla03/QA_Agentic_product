@@ -1,0 +1,17 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│ AI QA Engineer                                                          │
+│ API      http://127.0.0.1:8099/api                                      │
+│ Docs     http://127.0.0.1:8099/docs                                     │
+│ Dashboard http://127.0.0.1:8099/                                        │
+│ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
+└─────────────────────────────────────────────────────────────────────────┘
+INFO:     127.0.0.1:63894 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63895 - "GET /api/runs?limit=6 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63897 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51468 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51469 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51470 - "POST /api/runs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:51477 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51481 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65409 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65410 - "GET /api/runs/run_b7c7efe08e254450/events HTTP/1.1" 200 OK

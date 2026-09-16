@@ -12,6 +12,8 @@ names, and the healer refuses to write code into Gherkin whatever it is told.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agents.self_healing.agent import _is_code
 from packages.aiqa_types.models import TestCaseResult
 
@@ -77,3 +79,28 @@ def test_the_step_definition_location_survives_the_report() -> None:
     case = parse_cucumber_report(report).results[0]
     assert case.file_path == "tests/features/login.feature", "the test is still identified by its feature"
     assert case.code_path == "tests/steps/login.steps.ts", "but the repair goes to the code"
+
+
+def test_an_unverifiable_repair_is_reverted() -> None:
+    """The promise this module makes is that the worst case is "no change".
+
+    A repair used to be kept whenever verification could not run, "for human
+    review". What that left behind was a workspace whose suite would no longer
+    load at all — the runner could not parse the file the healer had just
+    written, so every test in the project was gone, not just the failing one.
+    That is the opposite of no change.
+    """
+    source = (
+        Path(__file__).resolve().parents[2] / "agents" / "self_healing" / "agent.py"
+    ).read_text(encoding="utf-8")
+
+    verify = source[source.index("async def _verify("):]
+    verify = verify[: verify.index("\n    @staticmethod")]
+
+    unverifiable = verify[verify.index("if not result.ok:"):]
+    unverifiable = unverifiable[: unverifiable.index("return")]
+    assert "fs.write_file" in unverifiable, "the repair has to come back out"
+    assert "_reverted_content" in unverifiable
+    assert "leaving them for human review" not in source, (
+        "keeping an unverifiable repair is what broke the suite"
+    )
