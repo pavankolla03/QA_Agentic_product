@@ -60,6 +60,24 @@ class LLMRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def effective_timeout(self) -> int:
+        """How long to wait, given how much output was asked for.
+
+        A flat timeout is really two different limits wearing one hat: "this
+        request has hung" and "this answer is too long to wait for". They need
+        different numbers. Free models generate at roughly 60-100 tokens a
+        second, so 150 seconds is generous for a 2,000-token reply and simply
+        impossible for a 16,000-token one — and raising the retry ceiling
+        without touching the timeout turned truncation, which is recoverable,
+        into a timeout, which is not. One test-design call sat for twelve
+        minutes that way.
+
+        The configured timeout is treated as the floor, and long requests are
+        given a second per 50 tokens on top.
+        """
+        return max(self.timeout_seconds, 30 + self.max_tokens // 50)
+
+    @property
     def prompt_text(self) -> str:
         return "\n\n".join(f"[{m.to_dict()['role']}]\n{m.content}" for m in self.messages)
 

@@ -167,7 +167,7 @@ class OpenAICompatibleProvider(BaseProvider):
         return payload
 
     async def _chat(self, req: LLMRequest) -> LLMResponse:
-        async with _client(req.timeout_seconds) as client:
+        async with _client(req.effective_timeout) as client:
             try:
                 resp = await client.post(
                     f"{self.base_url}{self.chat_path}", headers=self._headers(), json=self._payload(req)
@@ -364,7 +364,7 @@ class OllamaProvider(BaseProvider):
         if req.stop:
             payload["options"]["stop"] = req.stop
 
-        async with _client(req.timeout_seconds) as client:
+        async with _client(req.effective_timeout) as client:
             try:
                 resp = await client.post(f"{self.base_url}/api/chat", json=payload)
             except httpx.HTTPError as exc:
@@ -456,7 +456,7 @@ class AnthropicProvider(BaseProvider):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        async with _client(req.timeout_seconds) as client:
+        async with _client(req.effective_timeout) as client:
             try:
                 resp = await client.post(f"{self.base_url}/messages", headers=headers, json=payload)
             except httpx.HTTPError as exc:
@@ -520,7 +520,7 @@ class GeminiProvider(BaseProvider):
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         url = f"{self.base_url}/models/{model}:generateContent"
-        async with _client(req.timeout_seconds) as client:
+        async with _client(req.effective_timeout) as client:
             try:
                 resp = await client.post(url, params={"key": self.api_key}, json=payload)
             except httpx.HTTPError as exc:
