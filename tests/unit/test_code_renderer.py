@@ -650,3 +650,44 @@ def test_a_bound_step_is_not_pending() -> None:
     source = render_steps(steps, [page])
     assert "await loginPage.submit();" in source
     assert "return 'pending';" not in source
+
+
+def test_a_step_file_imports_only_what_it_uses() -> None:
+    """Dead code in a file the platform tells people to trust.
+
+    Every step file imported `Given, When, Then` whatever it contained, and
+    declared a variable for every page the *plan* mentioned rather than every
+    page its own steps touch. One generated file imported `LoginPage` and
+    declared `loginPage` without referring to either.
+    """
+    steps = [StepPlan(text="I reload the page", keyword="When", page="DashboardPage", call="reloadPage()")]
+    source = render_steps(
+        steps,
+        ["DashboardPage", "LoginPage"],
+        existing_members={"DashboardPage": {"expectLoaded"}},
+    )
+
+    assert "import { When } from" in source, source
+    assert "Given" not in source and "Then" not in source
+    assert "LoginPage" not in source, "no step in this file mentions it"
+    assert "let dashboardPage!: DashboardPage;" in source
+
+
+def test_every_declared_page_is_referenced() -> None:
+    """The general property, not the one instance of it."""
+    steps = [
+        StepPlan(text="I am on the login page", keyword="Given", page="LoginPage", call="", setup=True),
+        StepPlan(text="I submit", keyword="When", page="LoginPage", call="submit()"),
+    ]
+    page = PagePlan(
+        class_name="LoginPage",
+        base_class="BasePage",
+        locators={"submit": "getByTestId('login-submit')"},
+        methods=[MethodPlan(name="submit", kind="action", locators=["submit"])],
+    )
+    source = render_steps(steps, [page, "DashboardPage"])
+    for line in source.splitlines():
+        if line.startswith("let "):
+            name = line[4:].split("!")[0]
+            body = source[source.index("(", source.index("Given(")) :]
+            assert name in body, f"{name} is declared and never used"

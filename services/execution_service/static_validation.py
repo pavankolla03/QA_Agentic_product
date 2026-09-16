@@ -333,12 +333,38 @@ class ESLintValidator:
             command=["npx", "eslint", "--format", "json", *targets], cwd=".", timeout=timeout
         )
         payload = result.data if isinstance(result.data, dict) else {}
-        try:
-            report = json.loads(payload.get("stdout", "[]") or "[]")
-        except json.JSONDecodeError:
+        # Same rule as the compile gate: a command that never started reports
+        # nothing, and reporting nothing is not the same as finding nothing.
+        if "exit_code" not in payload:
             return CheckOutcome(
-                self.name, ran=True, passed=True,
-                detail="eslint produced no parseable JSON report",
+                self.name, ran=False,
+                skipped_reason=f"eslint could not be run: {result.error[:200] or 'no output'}",
+            )
+        stdout = (payload.get("stdout") or "").strip()
+        if not stdout and int(payload.get("exit_code", 0)) != 0:
+            # eslint exits 1 with a full report when it finds problems, and 2
+            # with nothing when it could not start — a bad config, an unreadable
+            # file. An empty report from a non-zero exit is the second case, and
+            # `"" or "[]"` quietly turned it into a clean bill of health.
+            return CheckOutcome(
+                self.name, ran=False,
+                skipped_reason=(
+                    f"eslint exited {payload.get('exit_code')} without a report: "
+                    f"{(payload.get('stderr') or '').strip()[-200:]}"
+                ),
+            )
+        try:
+            report = json.loads(stdout or "[]")
+        except json.JSONDecodeError:
+            # eslint prints its own errors — a bad config, an unparseable file —
+            # on stderr and emits no report. Calling that a pass is how the
+            # compile gate spent its whole life reporting green.
+            return CheckOutcome(
+                self.name, ran=False,
+                skipped_reason=(
+                    "eslint produced no parseable JSON report: "
+                    f"{(payload.get('stderr') or payload.get('stdout') or '').strip()[-200:]}"
+                ),
             )
 
         violations: list[StandardsViolation] = []

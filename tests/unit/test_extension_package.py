@@ -260,3 +260,50 @@ def test_the_shell_resolves_executables_before_spawning() -> None:
 
     if shutil.which("npx"):
         assert resolved[0] != "npx" and Path(resolved[0]).exists()
+
+
+def test_eslint_that_could_not_run_is_not_a_pass_either() -> None:
+    """The second gate, with the same hole the first one had.
+
+    A bad config or an unparseable file makes eslint print to stderr and emit
+    no report; that was read as `ran=True, passed=True`. Every run in this
+    platform's history said `skipped: eslint`, so the bug never showed — but
+    the moment eslint was configured it would have started reporting clean on
+    every failure to run.
+    """
+    import tempfile
+
+    from services.execution_service.static_validation import ESLintValidator, StaticReport
+
+    class DeadRunner:
+        def run(self, **_: object) -> object:
+            class Result:
+                data = None
+                ok = False
+                error = "executable not found on PATH: npx"
+
+            return Result()
+
+    class BrokenConfigRunner:
+        def run(self, **_: object) -> object:
+            class Result:
+                data = {"stdout": "", "stderr": "Invalid option '--flat'", "exit_code": 2}
+                ok = False
+                error = "exit 2"
+
+            return Result()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "node_modules" / "eslint").mkdir(parents=True)
+        (root / "eslint.config.mjs").write_text("export default [];", encoding="utf-8")
+
+        dead = ESLintValidator(DeadRunner(), root).check(["tests/a.ts"])
+        assert dead.ran is False and "could not be run" in dead.skipped_reason
+
+        broken = ESLintValidator(BrokenConfigRunner(), root).check(["tests/a.ts"])
+        assert broken.ran is False, "no report means nothing was linted"
+        assert "Invalid option" in broken.skipped_reason, "say why, or nobody can fix it"
+        assert "exited 2" in broken.skipped_reason
+
+        assert StaticReport(outcomes=[dead]).verdict == "unverified"
