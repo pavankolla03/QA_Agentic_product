@@ -215,6 +215,9 @@ class PageSnapshot(Base):
     navigations: list[str] = Field(default_factory=list)
     screenshot_path: str | None = None
     dom_hash: str = ""
+    #: The HTTP status the crawl saw. A 404 still renders a page, so without
+    #: this the error page was recorded as a route of the application.
+    status: int = 0
     captured_at: datetime = Field(default_factory=utcnow)
 
 

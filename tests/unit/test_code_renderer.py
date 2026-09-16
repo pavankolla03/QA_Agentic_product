@@ -691,3 +691,49 @@ def test_every_declared_page_is_referenced() -> None:
             name = line[4:].split("!")[0]
             body = source[source.index("(", source.index("Given(")) :]
             assert name in body, f"{name} is declared and never used"
+
+
+def test_a_locator_and_a_method_cannot_share_a_name() -> None:
+    """TS2300, and a method body that calls itself.
+
+    `private get searchResidents()` beside `async searchResidents(...)` is a
+    duplicate identifier — they share one namespace in a TypeScript class — and
+    `this.searchResidents.fill(...)` inside the method resolves to the method.
+    Both names are perfectly reasonable in isolation, which is exactly why a
+    plan produced them.
+    """
+    plan = PagePlan(
+        class_name="ResidentsPage",
+        base_class="BasePage",
+        route="/residents",
+        locators={
+            "searchResidents": "getByTestId('resident-search')",
+            "searchSubmit": "getByTestId('resident-search-submit')",
+        },
+        roles={"searchResidents": "textbox", "searchSubmit": "button"},
+        methods=[
+            MethodPlan(
+                name="searchResidents", kind="action", params=["term"],
+                locators=["searchResidents", "searchSubmit"],
+            )
+        ],
+    )
+    source = render_page_object(plan)
+
+    assert "private get searchResidentsField()" in source, source
+    assert "async searchResidents(term: string)" in source, "the method keeps the name"
+    assert "this.searchResidentsField.fill(term);" in source, "and the body follows the rename"
+    assert source.count("searchResidents(") == 1, "only the method declares that name"
+
+
+def test_a_plan_without_collisions_is_left_alone() -> None:
+    plan = PagePlan(
+        class_name="LoginPage",
+        base_class="BasePage",
+        locators={"username": "getByTestId('login-username')"},
+        roles={"username": "textbox"},
+        methods=[MethodPlan(name="signIn", kind="action", params=["user"], locators=["username"])],
+    )
+    source = render_page_object(plan)
+    assert "private get username()" in source
+    assert "usernameField" not in source

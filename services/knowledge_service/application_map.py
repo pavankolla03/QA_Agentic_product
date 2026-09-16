@@ -271,7 +271,20 @@ class ApplicationMap:
         # username and password. An alias is not a page.
         twin = self._route_with_same_dom(page)
         if twin is not None:
-            self.aliases[page.route] = twin
+            # Which of the two is the real one matters. Crawl order is an
+            # accident, so recording whichever arrived first would happily make
+            # the guessed `/automation` the page and demote the linked
+            # `/dashboard` to an alias of it.
+            if self._more_canonical(page.route, twin):
+                self.pages[page.route] = self.pages.pop(twin)
+                self.pages[page.route]["route"] = page.route
+                self.aliases = {
+                    route: (page.route if target == twin else target)
+                    for route, target in self.aliases.items()
+                }
+                self.aliases[twin] = page.route
+            else:
+                self.aliases[page.route] = twin
             return
 
         existing = self.page(page.route)
@@ -300,6 +313,38 @@ class ApplicationMap:
 
     def known_routes(self) -> list[str]:
         return sorted(self.pages)
+
+    def _more_canonical(self, candidate: str, current: str) -> bool:
+        """Is `candidate` the better name for a page currently filed as `current`?
+
+        Three rules, in order:
+
+        1. A route another page links to is one the application admits exists.
+           A route the crawler invented from the words in an instruction is
+           not, however plausibly it answers.
+        2. `/` loses to any named route. The root usually redirects, and a Page
+           Object whose `path` is `/` says nothing about what it models —
+           `/login` is both truer and more stable.
+        3. Otherwise keep what is already recorded. Between two routes the
+           application never links to and that serve the same bytes, there is
+           no evidence to prefer either — "shorter wins" would make `/form`
+           beat `/login`, which is arbitrary dressed up as a rule. First seen
+           wins instead, and first seen is the order the run asked for.
+        """
+        linked = self._linked_routes()
+        if (candidate in linked) != (current in linked):
+            return candidate in linked
+        if (candidate == "/") != (current == "/"):
+            return current == "/"
+        return False
+
+    def _linked_routes(self) -> set[str]:
+        """Every route reachable by a link from a page already in the map."""
+        routes: set[str] = set()
+        for known in self.pages.values():
+            for href in known.get("navigations", []) or []:
+                routes.add(route_of(str(href)))
+        return routes
 
     def _route_with_same_dom(self, page: PageKnowledge) -> str | None:
         """The route already holding this exact DOM, if another one does.

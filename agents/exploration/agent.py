@@ -16,6 +16,7 @@ than plausible fiction.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -49,6 +50,24 @@ Reply with ONE JSON object:
 
 `locator` must be copied verbatim from a `recommended_locator` in the input, or left empty.
 Never invent a locator."""
+
+
+
+#: A path someone typed: a leading slash, then path-ish characters. Deliberately
+#: strict — `/` alone and anything with a space is not a route worth crawling.
+_EXPLICIT_PATH = re.compile(r"(?<![\w/])(/[A-Za-z0-9][A-Za-z0-9._\-/]{0,60})")
+
+
+def _explicit_paths(text: str) -> list[str]:
+    """Paths named outright in the request, in the order they appear."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for match in _EXPLICIT_PATH.finditer(text or ""):
+        route = match.group(1).rstrip(".,;:)")
+        if route not in seen:
+            seen.add(route)
+            out.append(route)
+    return out[:6]
 
 
 class ExplorationAgent(BaseAgent):
@@ -288,8 +307,16 @@ class ExplorationAgent(BaseAgent):
 
     # ------------------------------------------------------------------ #
     def _candidate_routes(self, ctx: AgentContext, app_map: ApplicationMap) -> list[str]:
-        """Guess likely entry points from the feature name, plus what we already know."""
-        routes: list[str] = ["/"]
+        """Guess likely entry points from the feature name, plus what we already know.
+
+        A path the user wrote down goes first and is not a guess. Asking for
+        "the registration form at /residents/new" and then crawling
+        `/registration`, `/registrations` and `/resident/new` — inflections of
+        the *words* — while never visiting the path in the sentence is a
+        strange way to treat the one piece of certain information available.
+        """
+        explicit = _explicit_paths(f"{ctx.instruction} {ctx.requirement.description if ctx.requirement else ''}")
+        routes: list[str] = [*explicit, "/"]
         title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
         words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
         for word in words[:3]:

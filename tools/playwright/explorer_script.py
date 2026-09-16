@@ -253,7 +253,7 @@ async function crawlStatic(output) {
     seen.add(url);
     try {
       const data = await harvestStatic(url);
-      output.snapshots.push({ url, screenshot_path: null, ...data });
+      output.snapshots.push({ url, status: 200, screenshot_path: null, ...data });
       for (const href of data.navigations) {
         try {
           const next = new URL(href, url);
@@ -297,7 +297,15 @@ async function crawlStatic(output) {
       seen.add(url);
 
       try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
+        const status = response ? response.status() : 0;
+        if (status >= 400) {
+          // A 404 still renders a page, and a crawler that only checks for an
+          // exception records the error page as a route of the application.
+          output.unreachable.push(url);
+          output.errors.push(url + ': HTTP ' + status);
+          continue;
+        }
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
         const data = await harvest(page);
 
@@ -307,7 +315,7 @@ async function crawlStatic(output) {
           await page.screenshot({ path: screenshotPath, fullPage: false }).catch(() => { screenshotPath = null; });
         }
 
-        output.snapshots.push({ url: page.url(), screenshot_path: screenshotPath, ...data });
+        output.snapshots.push({ url: page.url(), status, screenshot_path: screenshotPath, ...data });
 
         // Breadth-first: follow same-origin links we have not visited yet.
         for (const href of data.navigations) {
