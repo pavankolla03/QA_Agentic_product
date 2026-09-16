@@ -31,10 +31,11 @@ from sqlalchemy import case, delete, desc, func, select
 
 from agents.orchestrator.graph import describe_agents
 from configs.settings import get_settings, load_project_standards
-from packages.aiqa_types.enums import ApprovalStatus, AuditAction, RunStatus
+from packages.aiqa_types.enums import ApprovalStatus, AuditAction, RunMode, RunStatus
 from packages.aiqa_types.models import Project, RunRequest, new_id
 from packages.security.guard import PolicyViolation
 from services.agent_engine.engine import AgentEngine, RunNotFound, get_engine
+from services.agent_engine.intent import classify
 from services.api_gateway.auth import (
     CurrentPrincipal,
     Principal,
@@ -47,6 +48,8 @@ from services.api_gateway.schemas import (
     ApiKeyCreate,
     ApprovalDecision,
     ApprovalOut,
+    ChatIn,
+    ChatOut,
     HealthOut,
     LintRequest,
     ProjectCreate,
@@ -426,6 +429,76 @@ def _run_summary(row: RunRow, project_name: str = "", pending: str = "") -> RunS
         llm_calls=row.llm_calls, duration_s=round(row.duration_s, 2), error=row.error,
         pending_approval_id=pending, created_at=_iso(row.created_at), ended_at=_iso(row.ended_at),
     )
+
+
+@api.post("/chat", response_model=ChatOut, tags=["runs"])
+async def chat(payload: ChatIn, principal: Principal = requires("run:read")) -> ChatOut:
+    """Answer a chat message, or say that it warrants a run.
+
+    Every message used to become a run: ten agents, a crawl, code generation,
+    several minutes of free models. For "Hi" that produced no answer at all,
+    which is indistinguishable from a chat that does not work.
+
+    Most messages never need a model. The ones that do get one short call on
+    the cheap tier, and if that is unavailable the message is answered
+    conservatively rather than escalated into a run — a wrong sentence costs a
+    sentence, a wrong run costs five minutes and writes files.
+    """
+    intent = classify(payload.message)
+    if intent.kind == "run":
+        return ChatOut(kind="run", mode=intent.mode)
+    if intent.confident and intent.text:
+        return ChatOut(kind="reply", text=intent.text, suggestions=intent.suggestions)
+
+    context = _chat_context(payload.project_id, principal)
+    try:
+        answer = await _engine().answer(payload.message, context=context)
+    except Exception:  # noqa: BLE001 - a chat reply must never fail the panel
+        log.debug("chat answer failed", exc_info=True)
+        answer = ""
+
+    if answer.strip().upper().startswith("RUN"):
+        return ChatOut(kind="run", mode=RunMode.FULL)
+    if not answer:
+        answer = (
+            "I could not reach a model to answer that. Ask me to automate "
+            "something and I will start a run, which does not need one for the "
+            "first few steps."
+        )
+    return ChatOut(kind="reply", text=answer)
+
+
+def _chat_context(project_id: str, principal: Principal) -> str:
+    """A few honest facts about this project, for answering questions about it."""
+    if not project_id:
+        return "No project is bound to this workspace yet."
+    try:
+        with session_scope() as session:
+            project = session.get(ProjectRow, project_id)
+            if project is None or (project.org_id and project.org_id != principal.org_id):
+                return "No project is bound to this workspace yet."
+            runs = list(
+                session.execute(
+                    select(RunRow)
+                    .where(RunRow.project_id == project_id)
+                    .order_by(RunRow.created_at.desc())
+                    .limit(3)
+                ).scalars()
+            )
+    except Exception:  # noqa: BLE001
+        return ""
+    lines = [
+        f"Project: {project.name}",
+        f"Repository: {project.repository_path}",
+        f"Application under test: {project.base_url or '(none set)'}",
+    ]
+    if runs:
+        lines.append("Recent runs:")
+        lines += [
+            f"  - {r.instruction[:70]} ({r.status}, {r.tests_passed}/{r.tests_total} passing)"
+            for r in runs
+        ]
+    return "\n".join(lines)
 
 
 @api.post("/runs", response_model=RunSummary, status_code=201, tags=["runs"])

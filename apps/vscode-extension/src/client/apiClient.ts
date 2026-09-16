@@ -11,6 +11,20 @@ import WebSocket from 'ws';
 
 export type RunMode = 'plan_only' | 'generate' | 'full' | 'autonomous' | 'execute_only' | 'heal_only';
 
+/**
+ * What to do with one typed message.
+ *
+ * `reply` means the answer is in `text` and nothing else should happen. Every
+ * message used to become a run, so "Hi" spent several minutes in a ten-agent
+ * pipeline and returned nothing at all.
+ */
+export interface ChatReply {
+  kind: 'reply' | 'run';
+  text: string;
+  mode: RunMode;
+  suggestions: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -437,6 +451,14 @@ export class ApiClient {
   }
 
   // -- runs ----------------------------------------------------------- //
+  /** Answer one chat message, or say it warrants a run. */
+  chat(projectId: string, message: string): Promise<ChatReply> {
+    return this.request<ChatReply>('/api/chat', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId, message }),
+    });
+  }
+
   createRun(body: Record<string, unknown>): Promise<RunSummary> {
     return this.request<RunSummary>('/api/runs', { method: 'POST', body: JSON.stringify(body) });
   }

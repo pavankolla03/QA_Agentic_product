@@ -90,12 +90,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Decide what a typed message means before spending five minutes on it.
+   *
+   * Every message used to go straight to `startRun`, so "Hi" became a
+   * ten-agent pipeline — a crawl, code generation, the compile gate — and
+   * produced no answer at all. Most messages are answered in milliseconds and
+   * never touch a model; the rest become runs, as they always did.
+   *
+   * A mode the user picked deliberately in the dropdown always wins. They have
+   * said what they want; asking the server to reclassify it would be rude.
+   */
+  private async submit(text: string, chosenMode?: RunMode): Promise<void> {
+    if (!text) {
+      return;
+    }
+    this.post({ type: 'userMessage', text });
+
+    const config = vscode.workspace.getConfiguration('aiqa');
+    const projectId = config.get<string>('projectId', '');
+    const explicit = chosenMode && chosenMode !== config.get<string>('defaultMode', 'full');
+
+    if (!explicit) {
+      this.post({ type: 'thinking' });
+      try {
+        const reply = await this.api.chat(projectId, text);
+        if (reply.kind === 'reply') {
+          this.post({ type: 'assistantMessage', text: reply.text, suggestions: reply.suggestions });
+          return;
+        }
+        await this.startRun(text, reply.mode ?? chosenMode ?? 'full', {}, { echo: false });
+        return;
+      } catch {
+        // The classifier is a convenience, not a gate. If the control plane
+        // cannot be reached the message still becomes a run, which is what it
+        // would have done before any of this existed.
+        this.post({ type: 'thinkingDone' });
+      }
+    }
+
+    await this.startRun(text, chosenMode ?? 'full', {}, { echo: false });
+  }
+
   async startRun(
     instruction: string,
     mode: RunMode,
     extra: Record<string, unknown> = {},
+    options: { echo?: boolean } = {},
   ): Promise<void> {
     await this.reveal();
+    if (options.echo !== false) {
+      this.post({ type: 'userMessage', text: instruction });
+    }
     const config = vscode.workspace.getConfiguration('aiqa');
     let projectId = config.get<string>('projectId', '');
 
@@ -113,7 +159,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    this.post({ type: 'runStarting', instruction, mode });
+    this.post({ type: 'runStarting', instruction, mode, echoed: options.echo === false });
     try {
       const run = await this.api.createRun({
         project_id: projectId,
@@ -197,7 +243,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private async handleMessage(message: Record<string, any>): Promise<void> {
     switch (message.command) {
       case 'submit':
-        await this.startRun(String(message.text ?? '').trim(), (message.mode ?? 'full') as RunMode);
+        await this.submit(String(message.text ?? '').trim(), message.mode as RunMode | undefined);
         break;
 
       case 'approve':

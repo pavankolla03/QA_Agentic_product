@@ -25,6 +25,7 @@ from configs.settings import get_settings, load_model_config, load_project_stand
 from packages.aiqa_types.enums import (
     ApprovalStatus,
     AuditAction,
+    Capability,
     RunMode,
     RunStatus,
     Severity,
@@ -110,6 +111,30 @@ class AgentEngine:
 
     # ------------------------------------------------------------------ #
     # Creating a run
+    # ------------------------------------------------------------------ #
+    async def answer(self, message: str, *, context: str = "") -> str:
+        """One short reply to one chat message. No run, no agents, no files.
+
+        The cheap tier and a small ceiling, because this is the call a person
+        is sitting and waiting for. Everything else this class does is
+        measured in minutes; this has to be measured in seconds or it is not
+        worth doing at all.
+        """
+        from packages.llm_provider.base import ChatMessage
+        from services.agent_engine.intent import ANSWER_SYSTEM
+
+        system = ANSWER_SYSTEM + (f"\n\n## This project\n{context}" if context else "")
+        router = ModelRouter(offline=self.offline)
+        response = await router.complete(
+            [ChatMessage.system(system), ChatMessage.user(message)],
+            capability=Capability.CHEAP,
+            task="chat.answer",
+            max_tokens=400,
+            temperature=0.3,
+        )
+        return (response.text or "").strip()
+
+
     # ------------------------------------------------------------------ #
     def create_run(self, request: RunRequest, user_id: str = "", org_id: str = "") -> str:
         project = self._load_project(request.project_id)

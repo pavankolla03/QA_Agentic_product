@@ -104,6 +104,34 @@ body {
   white-space: pre-wrap;
 }
 
+/* ---- a plain answer ----
+ * Deliberately unlike `.turn`: the user's message is a bubble on the right,
+ * the assistant's is flush text on the left, the way every chat that reads
+ * well does it. Answers can be several sentences and a bubble that wide stops
+ * looking like a bubble.
+ */
+.assistant {
+  align-self: stretch;
+  max-width: 100%;
+  line-height: 1.55;
+  padding: 2px 0 6px;
+}
+
+.assistant-line + .assistant-line { margin-top: 10px; }
+
+.assistant.thinking {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+.assistant .suggestions { margin-top: 10px; }
+
 /* agent step */
 .step {
   border-left: 2px solid var(--vscode-panel-border);

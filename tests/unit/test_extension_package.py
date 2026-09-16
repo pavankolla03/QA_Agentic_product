@@ -307,3 +307,42 @@ def test_eslint_that_could_not_run_is_not_a_pass_either() -> None:
         assert "exited 2" in broken.skipped_reason
 
         assert StaticReport(outcomes=[dead]).verdict == "unverified"
+
+
+# --------------------------------------------------------------------------- #
+# The chat
+# --------------------------------------------------------------------------- #
+def test_the_chat_asks_what_a_message_means_before_running_it() -> None:
+    """"Hi" used to be a ten-agent pipeline.
+
+    Every typed message went straight to `startRun`. The panel then sat empty
+    for minutes and produced nothing, because there is no automation to do for
+    a greeting — which is exactly how a broken chat behaves.
+    """
+    view = (EXTENSION / "src" / "panels" / "chatView.ts").read_text(encoding="utf-8")
+    assert "this.api.chat(" in view, "nothing classifies the message"
+
+    submit = view[view.index("private async submit("):]
+    submit = submit[: submit.index("\n  async startRun(")]
+    assert submit.index("this.api.chat(") < submit.index("this.startRun("), (
+        "the classifier has to run first, or it has not saved anyone anything"
+    )
+    assert "reply.kind === 'reply'" in submit
+
+
+def test_a_mode_the_user_picked_is_not_second_guessed() -> None:
+    view = (EXTENSION / "src" / "panels" / "chatView.ts").read_text(encoding="utf-8")
+    assert "explicit" in view and "if (!explicit)" in view, (
+        "choosing a mode in the dropdown is a statement of intent"
+    )
+
+
+def test_the_webview_can_render_an_answer() -> None:
+    """A reply needs somewhere to go; the panel only knew how to draw runs."""
+    chat_js = (EXTENSION / "media" / "chat.js").read_text(encoding="utf-8")
+    for case in ("'userMessage'", "'assistantMessage'", "'thinking'"):
+        assert f"case {case}:" in chat_js, f"no handler for {case}"
+    assert "function renderAssistant(" in chat_js
+
+    chat_css = (EXTENSION / "media" / "chat.css").read_text(encoding="utf-8")
+    assert ".assistant" in chat_css, "an unstyled answer is an answer nobody reads"

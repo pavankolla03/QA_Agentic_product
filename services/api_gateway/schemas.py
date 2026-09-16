@@ -71,6 +71,27 @@ class ProjectOut(BaseModel):
     created_at: str = ""
 
 
+class ChatIn(BaseModel):
+    """One message typed into the chat panel."""
+
+    project_id: str = ""
+    message: str = Field(min_length=1, max_length=20000)
+
+
+class ChatOut(BaseModel):
+    """What to do with it.
+
+    `kind` is "reply" when the answer is in `text`, and "run" when the caller
+    should start a run with `mode`. Turning every message into a run is what
+    made "Hi" take five minutes and produce nothing.
+    """
+
+    kind: str
+    text: str = ""
+    mode: RunMode = RunMode.FULL
+    suggestions: list[str] = Field(default_factory=list)
+
+
 class RunCreate(BaseModel):
     project_id: str
     instruction: str = Field(min_length=1, max_length=20000)

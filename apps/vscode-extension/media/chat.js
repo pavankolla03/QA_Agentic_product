@@ -113,6 +113,46 @@
     return record;
   }
 
+  /* A plain answer, and the affordance to keep going.
+   *
+   * Not every message is a job. Before this, "Hi" went straight into a
+   * ten-agent run and the panel sat empty for minutes; anything that is really
+   * a question now gets answered here in milliseconds.
+   */
+  function renderAssistant(text, suggestions) {
+    const wrap = el('div', 'assistant');
+    String(text || '').split(/\n\n+/).forEach(function (paragraph) {
+      wrap.appendChild(el('div', 'assistant-line', paragraph));
+    });
+    if (suggestions && suggestions.length) {
+      const row = el('div', 'suggestions');
+      suggestions.forEach(function (suggestion) {
+        const button = el('button', 'suggestion', suggestion);
+        button.addEventListener('click', function () {
+          els.prompt.value = suggestion;
+          els.prompt.focus();
+        });
+        row.appendChild(button);
+      });
+      wrap.appendChild(row);
+    }
+    els.timeline.appendChild(wrap);
+    scroll();
+  }
+
+  function showThinking() {
+    clearThinking();
+    const node = el('div', 'assistant thinking', 'thinking…');
+    node.id = 'thinking';
+    els.timeline.appendChild(node);
+    scroll();
+  }
+
+  function clearThinking() {
+    const node = document.getElementById('thinking');
+    if (node) node.remove();
+  }
+
   /* A run-level clock in the status line.
    *
    * Individual steps tick, but between one agent finishing and the next
@@ -630,15 +670,39 @@
         }
         break;
 
+      case 'userMessage':
+        clearWelcome();
+        clearThinking();
+        els.timeline.appendChild(el('div', 'turn', message.text));
+        scroll();
+        break;
+
+      case 'thinking':
+        clearWelcome();
+        showThinking();
+        break;
+
+      case 'thinkingDone':
+        clearThinking();
+        break;
+
+      case 'assistantMessage':
+        clearThinking();
+        renderAssistant(message.text, message.suggestions || []);
+        break;
+
       case 'runStarting':
         clearWelcome();
+        clearThinking();
         state.steps.clear();
         state.tokens = 0;
         state.cost = 0;
         state.running = true;
         updateMeters();
         els.cancelBtn.hidden = false;
-        els.timeline.appendChild(el('div', 'turn', message.instruction));
+        if (!message.echoed) {
+          els.timeline.appendChild(el('div', 'turn', message.instruction));
+        }
         setStatus('connected', 'starting ' + message.mode);
         scroll();
         break;
