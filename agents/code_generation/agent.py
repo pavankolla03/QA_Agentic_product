@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import PurePosixPath
+from typing import Any
 
 from agents.base import AgentContext, BaseAgent, json_block
 from agents.code_generation.api_renderer import (
@@ -346,8 +347,11 @@ class CodeGenerationAgent(BaseAgent):
             fallback=None,
             # Enough for a multi-page plan with step bindings. Truncation here
             # drops the run to the deterministic scaffold, which is a much
-            # worse outcome than a slightly longer call.
-            max_tokens=6000,
+            # worse outcome than a slightly longer call — and 6,000 was not
+            # enough for six scenarios, so the common case paid for a truncated
+            # call *and* a retry. Output is free on these models; a wasted
+            # round trip is the only thing that costs anything.
+            max_tokens=10_000,
             cacheable_prefix_chars=len(system),
         )
 
@@ -428,6 +432,18 @@ class CodeGenerationAgent(BaseAgent):
 
         page_names = [p.class_name for p in generation.pages] + list(plan.page_objects_reused)
         slug = re.sub(r"[^a-z0-9]+", "-", (plan.features[0].name if plan.features else "steps").lower()).strip("-")
+
+        # A page the plan describes is not necessarily a page this run writes.
+        # `_render_pages` skips any class that already exists in the repository,
+        # and passing its PagePlan on to the step renderer told that renderer
+        # "we are generating this, so trust its methods" -- which is how a plan
+        # reused the real `LoginPage` and called `ensureTestUserExists()` and
+        # `submitSignInWithValues()` on it. Neither exists. Only the classes
+        # actually written this run get that trust; the rest are passed by name,
+        # so their calls are checked against the index.
+        written = {p.name for p in (ctx.repo_profile.symbols_of("page_object") if ctx.repo_profile else [])}
+        pages_for_steps: list[Any] = [p for p in generation.pages if p.class_name not in written]
+        pages_for_steps += [p.class_name for p in generation.pages if p.class_name in written]
         return [
             FileChange(
                 path=str(PurePosixPath(layout["steps_dir"]) / f"{slug}.steps.ts"),
@@ -436,7 +452,7 @@ class CodeGenerationAgent(BaseAgent):
                     new_steps,
                     # The plans, not just the names: a step must be bound to the
                     # method's real signature or it will not compile.
-                    pages=generation.pages,
+                    pages=pages_for_steps,
                     pages_import_path=_relative_import(layout["steps_dir"], layout["pages_dir"]),
                     existing_members=_existing_members(ctx),
                 ),

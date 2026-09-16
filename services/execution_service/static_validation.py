@@ -246,8 +246,34 @@ class TypeScriptValidator:
 
         result = self.runner.run(command=["npx", "tsc", "--noEmit", "--pretty", "false"], cwd=".", timeout=timeout)
         payload = result.data if isinstance(result.data, dict) else {}
+
+        # Did tsc actually run? A command that never started carries no
+        # `exit_code`, and this used to read that as "no diagnostics, therefore
+        # clean". On Windows `npx` could not be spawned at all — `CreateProcess`
+        # ignores PATHEXT, and npx is a .CMD — so the answer was always no
+        # diagnostics and always clean. A compile gate that had never compiled
+        # anything, reporting `passed` every time. Absence of output is not
+        # evidence of correctness.
+        if "exit_code" not in payload:
+            return CheckOutcome(
+                self.name, ran=False,
+                skipped_reason=f"tsc could not be run: {result.error[:200] or 'no output'}",
+            )
+
         output = f"{payload.get('stdout', '')}\n{payload.get('stderr', '')}"
         violations = self._parse(output)
+
+        # A non-zero exit with nothing parseable means tsc failed for a reason
+        # this parser cannot read — a broken tsconfig, a missing dependency.
+        # Unverified, not passed.
+        if int(payload.get("exit_code", 0)) != 0 and not violations:
+            return CheckOutcome(
+                self.name, ran=False,
+                skipped_reason=(
+                    f"tsc exited {payload.get('exit_code')} with no diagnostics: {output.strip()[-200:]}"
+                ),
+            )
+
         return CheckOutcome(
             self.name, ran=True, passed=not violations, violations=violations,
             duration_ms=int(payload.get("duration_ms", 0)), detail=output[-1500:],

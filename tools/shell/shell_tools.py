@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -88,6 +89,7 @@ class RunCommandTool(Tool):
             self.ctx.tracker.audit("command_exec", full, "allowed", f"cwd={cwd}")
 
         args = command if isinstance(command, list) else shlex.split(command, posix=(os.name != "nt"))
+        args = _resolve_executable(args)
         started = time.perf_counter()
         try:
             proc = subprocess.run(  # noqa: S603 - command is allowlist-checked above
@@ -127,6 +129,30 @@ class RunCommandTool(Tool):
             error=f"exit code {proc.returncode}: {(stderr or stdout).strip()[:500]}",
             meta={"exit_code": proc.returncode, "duration_ms": duration},
         )
+
+
+def _resolve_executable(args: list[str]) -> list[str]:
+    """Resolve `args[0]` to a real file before spawning.
+
+    On Windows the node toolchain ships as `.CMD` shims -- `npx.CMD`,
+    `tsc.CMD` -- and `CreateProcess` does not consult PATHEXT. So
+    `subprocess.run(["npx", ...], shell=False)` raises FileNotFoundError while
+    `npx` works perfectly in any shell.
+
+    That one line is why the compile gate never compiled anything on Windows.
+    `npx tsc --noEmit` failed to start, the failure carried no stdout, and a
+    checker that read no diagnostics called the code clean. Every TypeScript
+    error the platform has ever generated on this platform went unreported by
+    the check built to catch them. The same applies to eslint, `playwright
+    test` and `cucumber-js`: all of them are npx.
+
+    `shell=True` would also fix it and would hand the allowlist's careful
+    argument splitting to cmd.exe. This does not.
+    """
+    if not args:
+        return args
+    resolved = shutil.which(args[0])
+    return [resolved, *args[1:]] if resolved else args
 
 
 class WhichTool(Tool):

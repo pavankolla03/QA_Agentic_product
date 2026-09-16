@@ -202,3 +202,61 @@ def test_the_chat_renders_every_event_the_backend_emits() -> None:
 
     missing = emitted - handled
     assert not missing, f"the chat silently drops these emitted events: {sorted(missing)}"
+
+
+def test_a_check_that_could_not_run_is_not_a_pass() -> None:
+    """The compile gate had never compiled anything on Windows.
+
+    `npx` is a `.CMD` shim and `CreateProcess` does not consult PATHEXT, so
+    `subprocess.run(["npx", "tsc", ...], shell=False)` raised FileNotFoundError
+    every time. The failure carried no stdout; the checker read no diagnostics;
+    no diagnostics meant `passed`. Every TypeScript error the platform
+    generated went unreported by the check built to catch them — including two
+    `TS2339`s in a run whose report said `0 error(s)`.
+
+    Two defences, because either alone would have let it through: the runner
+    resolves the executable before spawning, and the checker refuses to call an
+    invocation that produced no `exit_code` a clean compile.
+    """
+    from services.execution_service.static_validation import StaticReport, TypeScriptValidator
+
+    class DeadRunner:
+        """What a failed spawn actually looks like: no data, just an error."""
+
+        def run(self, **_: object) -> object:
+            class Result:
+                data = None
+                ok = False
+                error = "executable not found on PATH: npx"
+
+            return Result()
+
+    # Everything `available()` looks for, so the check reaches the runner.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "package.json").write_text("{}", encoding="utf-8")
+        (root / "tsconfig.json").write_text("{}", encoding="utf-8")
+        (root / "node_modules" / "typescript").mkdir(parents=True)
+        outcome = TypeScriptValidator(DeadRunner(), root).check()
+    assert outcome.ran is False, "a command that never started did not check anything"
+    assert "could not be run" in outcome.skipped_reason
+
+    report = StaticReport(outcomes=[outcome])
+    assert report.verdict == "unverified", "and unverified is not passed"
+
+
+
+def test_the_shell_resolves_executables_before_spawning() -> None:
+    """`shell=True` would also fix this, and would hand argument splitting to cmd.exe."""
+    from tools.shell.shell_tools import _resolve_executable
+
+    resolved = _resolve_executable(["npx", "tsc", "--noEmit"])
+    assert resolved[1:] == ["tsc", "--noEmit"], "only the executable is rewritten"
+    # On any machine with node installed this becomes an absolute path; where it
+    # is absent the original is kept so the spawn fails with a readable error.
+    import shutil
+
+    if shutil.which("npx"):
+        assert resolved[0] != "npx" and Path(resolved[0]).exists()
