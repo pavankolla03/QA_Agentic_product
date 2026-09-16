@@ -20,6 +20,17 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+# Seeded accounts. A demo whose login accepts any non-empty password cannot
+# exercise a negative path, so every generated "wrong password" scenario fails
+# for the same uninteresting reason and the failure analyst has nothing real to
+# analyse. These are fixture credentials for a local toy server; the test suite
+# reads them from the environment, as it should.
+_USERS: dict[str, str] = {
+    "std.user": "Passw0rd!",
+    "admin.user": "Adm1nPass!",
+    "ro.user": "ReadOnly1!",
+}
+
 _RESIDENTS: list[dict[str, str]] = [
     {"id": "1", "name": "Ada Lovelace", "email": "ada@example.com", "unit": "A-101"},
     {"id": "2", "name": "Grace Hopper", "email": "grace@example.com", "unit": "B-204"},
@@ -147,14 +158,22 @@ class _Handler(BaseHTTPRequestHandler):
             return (form.get(name) or [""])[0].strip()
 
         if route == "/login":
-            if field("username") and field("password"):
+            username, password = field("username"), field("password")
+            if not username or not password:
+                missing = "".join(
+                    f'<p data-testid="error-{name}">{label} is required</p>'
+                    for name, label in (("username", "Username"), ("password", "Password"))
+                    if not field(name)
+                )
+                self._page("Sign in", _LOGIN.format(error=missing), "login-heading", status=400)
+            elif _USERS.get(username) == password:
                 self._page("Dashboard", '<p data-testid="welcome">Welcome back.</p>', "dashboard-heading")
             else:
                 self._page(
                     "Sign in",
                     _LOGIN.format(error='<p data-testid="login-error">Invalid username or password</p>'),
                     "login-heading",
-                    status=400,
+                    status=401,
                 )
         elif route == "/residents/new":
             missing = [name for name in ("name", "email", "unit") if not field(name)]
