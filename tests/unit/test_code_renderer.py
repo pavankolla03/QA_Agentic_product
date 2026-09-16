@@ -607,3 +607,46 @@ def test_prose_is_not_read_as_cucumber_syntax() -> None:
     # A backslash in prose is itself an escape character to Cucumber.
     pattern, _ = parameterise(r"the export lands in C:\reports")
     assert r"C:\\reports" in pattern, pattern
+
+
+def test_an_unfinished_step_is_pending_not_passing() -> None:
+    """A step body that is only a comment reports as a pass.
+
+    It does nothing, and doing nothing is indistinguishable from succeeding:
+    Cucumber marks it passed, and the assertions after it pass too because the
+    browser is still wherever the previous step left it. A generated suite
+    reported "3 scenarios (3 passed)" with one step that had never been
+    written — green, from a file that openly said TODO.
+    """
+    steps = [
+        StepPlan(
+            text="I reload the page",
+            keyword="When",
+            page="DashboardPage",
+            call="reloadPage()",
+        )
+    ]
+    source = render_steps(
+        steps, ["DashboardPage"], existing_members={"DashboardPage": {"expectLoaded"}}
+    )
+    body = source[source.index("I reload the page") :]
+    assert "return 'pending';" in body, "an unimplemented step must not report as a pass"
+
+
+def test_an_unbound_step_is_pending_too() -> None:
+    steps = [StepPlan(text="something happens", keyword="When", page="LoginPage", call="")]
+    source = render_steps(steps, ["LoginPage"])
+    assert "return 'pending';" in source
+
+
+def test_a_bound_step_is_not_pending() -> None:
+    page = PagePlan(
+        class_name="LoginPage",
+        base_class="BasePage",
+        locators={"username": "getByTestId('login-username')"},
+        methods=[MethodPlan(name="submit", kind="action", locators=["username"])],
+    )
+    steps = [StepPlan(text="I submit the form", keyword="When", page="LoginPage", call="submit()")]
+    source = render_steps(steps, [page])
+    assert "await loginPage.submit();" in source
+    assert "return 'pending';" not in source

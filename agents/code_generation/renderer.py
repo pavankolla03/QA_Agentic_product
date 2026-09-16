@@ -398,6 +398,7 @@ def render_steps(
             available = ", ".join(sorted(known_members[step.page])[:6]) or "none"
             lines.append(f"  // TODO(aiqa): {step.page} has no {method_name}().")
             lines.append(f"  //   Its methods are: {available}")
+            lines.append(_pending())
         elif step.call and step.page:
             call = _bind_call(step.call, params, signatures.get((step.page, _call_name(step.call))))
             if call is None:
@@ -411,10 +412,12 @@ def render_steps(
                     planned = f"{planned}({', '.join(required or [])})"
                 lines.append(f"  // TODO(aiqa): supply {needed}, then call:")
                 lines.append(f"  // await {instance}.{planned};")
+                lines.append(_pending())
             else:
                 lines.append(f"  await {instance}.{call};")
         elif not step.setup:
             lines.append("  // TODO(aiqa): bind this step to a Page Object method.")
+            lines.append(_pending())
         lines.append("});")
         lines.append("")
 
@@ -432,6 +435,24 @@ def _method_params(pages: list[str] | list[PagePlan]) -> dict[tuple[str, str], l
         for method in page.methods:
             out[(page.class_name, method.name)] = list(method.params)
     return out
+
+
+def _pending() -> str:
+    """Mark an unfinished step pending rather than letting it pass.
+
+    A step body that is only a comment does nothing, and doing nothing is
+    indistinguishable from succeeding: Cucumber marks it passed, the scenario
+    goes green, and the assertions after it pass too because the browser is
+    still wherever the previous step left it. A generated suite reported
+    "3 scenarios (3 passed)" with one step that had never been written.
+
+    `pending` is Cucumber's own word for this. Under the default `--strict` it
+    fails the run, which is the honest outcome. The reason is already in the
+    TODO comment immediately above, and is deliberately not repeated here:
+    naming the missing method on an executable line would make it look like a
+    call to anything grepping the file.
+    """
+    return "  return 'pending';"
 
 
 def _call_name(call: str) -> str:

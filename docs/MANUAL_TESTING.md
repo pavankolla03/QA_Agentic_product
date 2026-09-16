@@ -261,6 +261,23 @@ cd C:\Users\Pavan.Kolla\Desktop\aiqa-demo
 npm run test:bdd
 ```
 
+```
+2 scenarios (2 passed)
+6 steps (6 passed)
+0m03.545s
+```
+
+`cucumber.cjs` also supplies the demo server's seeded credentials through the
+environment, which is where `tests/utils/test-users.ts` reads them from. With
+`STD_PASS` unset every sign-in submitted an empty password and failed for a
+reason that had nothing to do with the test.
+
+The demo app itself used to accept any non-empty password. A login with no
+failure path cannot exercise a negative scenario, so every "wrong password"
+test failed identically and failure analysis had nothing real to work on. It
+checks three seeded accounts now, and distinguishes an empty field from a
+rejected sign-in.
+
 `tests/support/world.ts` supplies `this.page` — one browser per scenario, on
 the system Chrome, because this machine has Chrome but not the Chromium build
 Playwright 1.63 expects.
