@@ -489,3 +489,46 @@ Each one produced a green report while doing nothing:
 | `Background:` steps had no definitions | scenarios died before their first assertion |
 | a `TODO` step body does nothing, and doing nothing passes | "3 scenarios (3 passed)" with a step that was never written |
 | the healer appended TypeScript to a `.feature` | a correct repair in a file that then stopped parsing |
+
+---
+
+## What the gates catch once they are switched on
+
+Both static gates run now — `tsc` and ESLint — and both had been skipped for
+this platform's entire history, for different reasons. `npx` is a `.CMD` and
+`CreateProcess` ignores PATHEXT, so every npx-based check failed to start and
+reported clean; ESLint had no configuration in the demo at all.
+
+Turning them on found a defect per run, every run, for several runs. A sample:
+
+| what the gate said | what it meant |
+|---|---|
+| `Cannot find module '../pages/Residents'` | a step bound to a class only half of which was generated |
+| `Duplicate identifier 'searchResidents'` | a locator getter and a method sharing one namespace |
+| `'expect' is defined but never used` | an assertion whose element was never verified asserts nothing |
+| `'loginPage' is defined but never used` | the step file declared every page the *plan* mentioned |
+
+None of these is visible in the plan, the Gherkin, or the diff. They are only
+visible to a compiler, which is the argument for having one in the loop.
+
+## What the map looks like when it is right
+
+The demo's application map held 25 routes, of which 21 were byte-identical
+copies of the login page — the crawler proposes candidate routes from words in
+the instruction, and an application that answers 200 to everything accepts all
+of them. A `ResidentsPage` was then bound to whichever ranked first, and every
+generated method on the resident registration form filled `username` and
+`password`.
+
+It now reads:
+
+```
+pages        /login  /dashboard  /reports  /residents  /residents/new
+aliases      / -> /login
+unreachable  /resident  /registration  /form  /forms  ...  (all 404)
+```
+
+Three rules got it there: identical DOM means one page and an alias; a 400 or
+worse is not a page at all; and a path written in the request — `/residents/new`
+— is crawled first, because it is the one piece of certain information
+available.
