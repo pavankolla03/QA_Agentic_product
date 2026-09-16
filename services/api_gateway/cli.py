@@ -50,11 +50,31 @@ def _bootstrap() -> None:
 
 
 # =========================================================================== #
+
+def _already_serving(host: str, port: int) -> bool:
+    """Is a healthy control plane already answering here?
+
+    Deliberately asks `/api/health` rather than just probing the socket: a port
+    held by something that is not us should still be reported, and the health
+    endpoint is the only way to tell the difference in the message.
+    """
+    import urllib.error
+    import urllib.request
+
+    probe = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+    try:
+        with urllib.request.urlopen(f"http://{probe}:{port}/api/health", timeout=2) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
 @app.command()
 def serve(
     host: str = typer.Option("", help="Bind address (defaults to AIQA_HOST)"),
     port: int = typer.Option(0, help="Port (defaults to AIQA_PORT)"),
     reload: bool = typer.Option(False, help="Auto-reload on code changes (development)"),
+    force: bool = typer.Option(False, help="Start even if something is already serving this port"),
 ) -> None:
     """Start the control plane API + dashboard."""
     import uvicorn
@@ -64,6 +84,20 @@ def serve(
     settings = get_settings()
     bind_host = host or settings.host
     bind_port = port or settings.port
+
+    # Windows lets a second process bind a port that is already serving, and
+    # then splits requests between them. The result is not an error anywhere —
+    # it is a control plane that answers roughly half the time and hangs for
+    # the rest, which from the extension is indistinguishable from a chat that
+    # does not work. Two of these accumulated during one debugging session and
+    # cost an hour.
+    if not force and _already_serving(bind_host, bind_port):
+        console.print(
+            f"[yellow]Something is already serving http://{bind_host}:{bind_port}[/yellow]\n"
+            "Nothing was started - that server is fine to use as it is.\n"
+            "Pass --force to start anyway, or stop the other process first."
+        )
+        raise typer.Exit(code=0)
     console.print(
         Panel.fit(
             f"[bold]AI QA Engineer[/bold]\n"

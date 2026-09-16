@@ -5,12 +5,19 @@
 │ Dashboard http://127.0.0.1:8099/                                        │
 │ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
 └─────────────────────────────────────────────────────────────────────────┘
-INFO:     127.0.0.1:59701 - "GET /api/health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59702 - "POST /api/runs HTTP/1.1" 201 Created
-INFO:     127.0.0.1:59708 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59722 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59726 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59730 - "GET /api/runs/run_494677660098488a/events HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59732 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59749 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59753 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65361 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65362 - "POST /api/runs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:65367 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65368 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65377 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65378 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53637 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53638 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53639 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53640 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65124 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65126 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65143 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65144 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65153 - "GET /api/runs/run_24c95b7e8e7b46e8 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65154 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
