@@ -82,7 +82,7 @@ report — so you can evaluate the platform before configuring anything.
 ```bash
 python -m scripts.selfcheck        # end-to-end, zero credentials
 python -m scripts.benchmark        # measure the cost of repeat runs
-pytest tests -q                    # 215 tests
+pytest tests -q                    # the whole suite
 ```
 
 ### Automate something
@@ -255,7 +255,7 @@ packages/
   llm_provider/          provider abstraction + offline engine
 configs/                 models.yaml · standards.yaml · security.yaml
 scripts/                 selfcheck · benchmark · demo_app
-tests/                   215 tests: unit, integration, end-to-end
+tests/                   unit, integration, end-to-end
 ```
 
 ---

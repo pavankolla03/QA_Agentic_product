@@ -405,3 +405,19 @@ def test_the_extension_consumes_the_stream_rather_than_waiting_for_it() -> None:
     for case in ("'assistantStart'", "'assistantToken'", "'assistantEnd'"):
         assert f"case {case}:" in chat_js, f"no handler for {case}"
     assert "function appendToken(" in chat_js
+
+
+def test_the_readme_states_no_test_count() -> None:
+    """A number written by hand is a number that goes stale.
+
+    The README claimed 215 tests for long enough that the real figure had more
+    than doubled. A count is either generated or absent; a wrong one is worse
+    than none, because a reader believes it.
+    """
+    import re
+
+    root = Path(__file__).resolve().parents[2]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    stale = re.findall(r"\b\d{2,5}\s+tests\b", readme)
+    assert not stale, f"hard-coded test counts in README.md: {stale}"
