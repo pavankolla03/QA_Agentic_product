@@ -22,9 +22,18 @@ from services.knowledge_service.application_map import ApplicationMap
 class _Ctx:
     """The handful of attributes `_candidate_routes` actually reads."""
 
-    def __init__(self, instruction: str, requirement: Requirement | None = None) -> None:
+    def __init__(
+        self,
+        instruction: str,
+        requirement: Requirement | None = None,
+        **metadata: object,
+    ) -> None:
         self.instruction = instruction
         self.requirement = requirement
+        # Always a dict on the real context, so it is always a dict here. A
+        # double that is missing what the real thing always has does not test
+        # the code, it tests the double.
+        self.metadata: dict[str, object] = dict(metadata)
 
 
 def _requirement(raw: str, **kwargs: object) -> Requirement:
