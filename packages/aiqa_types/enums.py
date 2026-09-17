@@ -53,6 +53,10 @@ class AgentName(StrEnum):
     EXPLORATION = "exploration"
     TEST_DESIGN = "test_design"
     CODE_GENERATION = "code_generation"
+    #: Closes generated steps that would not verify anything. Between
+    #: generation and standards, because a step that does nothing is not a
+    #: style problem — it is an unfinished one.
+    STEP_COVERAGE = "step_coverage"
     STANDARDS = "standards"
     EXECUTION = "execution"
     FAILURE_ANALYSIS = "failure_analysis"

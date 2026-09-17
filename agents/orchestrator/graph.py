@@ -31,6 +31,7 @@ from agents.repository.agent import RepositoryAgent
 from agents.requirement.agent import RequirementAgent
 from agents.self_healing.agent import SelfHealingAgent
 from agents.standards.agent import StandardsAgent
+from agents.step_coverage.agent import StepCoverageAgent
 from agents.test_design.agent import TestDesignAgent
 from packages.agent_protocol import ApprovalRequired
 from packages.aiqa_types.enums import AgentName, RunMode, RunStatus
@@ -144,13 +145,14 @@ class Orchestrator:
             return ["requirement", "repository", "exploration", "test_design", "reporting"]
         if mode == RunMode.GENERATE:
             return ["requirement", "repository", "exploration", "test_design",
-                    "code_generation", "standards", "execution", "reporting"]
+                    "code_generation", "step_coverage", "standards", "execution", "reporting"]
         if mode == RunMode.EXECUTE_ONLY:
             return ["repository", "execution", "failure_analysis", "reporting"]
         if mode == RunMode.HEAL_ONLY:
             return ["repository", "execution", "failure_analysis", "self_healing", "reporting"]
         return ["requirement", "repository", "exploration", "test_design", "code_generation",
-                "standards", "execution", "failure_analysis", "self_healing", "commit", "reporting"]
+                "step_coverage", "standards", "execution", "failure_analysis", "self_healing",
+                "commit", "reporting"]
 
     def entry_for(self, mode: RunMode) -> str:
         if mode in (RunMode.EXECUTE_ONLY, RunMode.HEAL_ONLY):
@@ -255,7 +257,15 @@ def build_default_nodes() -> dict[str, Node]:
             "exploration", ExplorationAgent(), lambda ctx: "test_design", critical=False
         ),
         "test_design": Node("test_design", TestDesignAgent(), _after_test_design, critical=True),
-        "code_generation": Node("code_generation", CodeGenerationAgent(), lambda ctx: "standards", critical=True),
+        "code_generation": Node(
+            "code_generation", CodeGenerationAgent(), lambda ctx: "step_coverage", critical=True
+        ),
+        # Between generation and standards on purpose: a step that does
+        # nothing is not a style problem, it is an unfinished one, and
+        # standards has no way to tell the difference.
+        "step_coverage": Node(
+            "step_coverage", StepCoverageAgent(), lambda ctx: "standards", critical=False
+        ),
         "standards": Node("standards", StandardsAgent(), _after_standards, critical=False),
         "execution": Node("execution", ExecutionAgent(), _after_execution, critical=True),
         "failure_analysis": Node("failure_analysis", FailureAnalysisAgent(), _after_failure_analysis, critical=False),
@@ -271,6 +281,7 @@ AGENT_CATALOG: dict[str, BaseAgent] = {
     AgentName.EXPLORATION.value: ExplorationAgent(),
     AgentName.TEST_DESIGN.value: TestDesignAgent(),
     AgentName.CODE_GENERATION.value: CodeGenerationAgent(),
+    AgentName.STEP_COVERAGE.value: StepCoverageAgent(),
     AgentName.STANDARDS.value: StandardsAgent(),
     AgentName.EXECUTION.value: ExecutionAgent(),
     AgentName.FAILURE_ANALYSIS.value: FailureAnalysisAgent(),

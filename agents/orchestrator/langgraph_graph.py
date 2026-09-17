@@ -60,7 +60,8 @@ REACHABLE: dict[str, tuple[str, ...]] = {
     "repository": ("exploration", "execution"),          # execute_only/heal_only skip exploration
     "exploration": ("test_design",),
     "test_design": ("code_generation", "reporting"),     # plan_only stops here
-    "code_generation": ("standards",),
+    "code_generation": ("step_coverage",),
+    "step_coverage": ("standards",),
     "standards": ("execution", "reporting"),
     "execution": ("failure_analysis", "commit", "reporting"),
     "failure_analysis": ("self_healing", "reporting"),
@@ -128,7 +129,8 @@ class LangGraphOrchestrator(Orchestrator):
             "repository": self._route_repository,
             "exploration": lambda _s: "test_design",
             "test_design": lambda s: _after_test_design(s["ctx"]),
-            "code_generation": lambda _s: "standards",
+            "code_generation": lambda _s: "step_coverage",
+            "step_coverage": lambda _s: "standards",
             "standards": lambda s: _after_standards(s["ctx"]),
             "execution": lambda s: _after_execution(s["ctx"]),
             "failure_analysis": lambda s: _after_failure_analysis(s["ctx"]),

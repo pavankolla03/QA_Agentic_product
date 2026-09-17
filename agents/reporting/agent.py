@@ -290,10 +290,22 @@ def _facts(ctx: AgentContext) -> dict[str, Any]:
         "commit": (ctx.metadata.get("commit") or {}).get("sha", ""),
         "warnings": ctx.warnings[:12],
         "iteration": ctx.iteration,
+        "blocked_steps": list(ctx.metadata.get("automation_blocked") or []),
     }
 
 
 def _headline(facts: dict[str, Any]) -> str:
+    # A step nothing implements is not a smaller success. Leading with the
+    # count of files written, as this did, is how a run with three unbound
+    # steps read as finished work — the precise failure the step coverage
+    # stage exists to make impossible.
+    if facts["blocked_steps"]:
+        blocked = facts["blocked_steps"]
+        first = blocked[0]
+        detail = f'"{first.get("step", "")}" — {first.get("reason", "")}'
+        more = f" (and {len(blocked) - 1} more)" if len(blocked) > 1 else ""
+        return f"AUTOMATION_BLOCKED: {len(blocked)} step(s) need a human decision. {detail}{more}"
+
     if facts["execution_blocked"]:
         return (
             f"Generated {facts['scenarios']} scenario(s) in {facts['files_changed']} file(s); "

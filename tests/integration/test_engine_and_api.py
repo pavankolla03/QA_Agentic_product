@@ -404,7 +404,14 @@ def test_metrics_and_audit_are_available(api_client, repo_copy) -> None:
 
 def test_agents_and_tools_are_introspectable(api_client) -> None:
     agents = api_client.get("/api/agents").json()
-    assert len(agents["agents"]) == 10
+    # Named rather than counted: a magic number here has to be edited every
+    # time a stage is added, and says nothing about what is missing when it is.
+    names = {agent["name"] for agent in agents["agents"]}
+    assert {
+        "requirement", "repository", "exploration", "test_design",
+        "code_generation", "step_coverage", "standards", "execution",
+        "failure_analysis", "self_healing", "reporting",
+    } <= names, sorted(names)
     assert set(agents["modes"]) >= {"plan_only", "generate", "full", "autonomous"}
 
     tools = api_client.get("/api/tools").json()

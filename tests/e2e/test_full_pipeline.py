@@ -214,8 +214,17 @@ async def test_report_is_complete_and_honest(completed_run) -> None:
     assert "# AI QA run" in markdown
     assert "## Summary" in markdown
     assert "## Next actions" in markdown
-    # Playwright is not installed in the fixture: the report must say so plainly.
-    assert "execution blocked" in report["headline"].lower() or report["tests_total"] > 0
+    # The fixture has no Playwright and no crawl, so there are two honest
+    # outcomes and the report must be one of them: it could not execute, or the
+    # steps it generated have no verified element behind them. What it must
+    # never do is lead with the count of files written, which reads as finished
+    # work.
+    headline = report["headline"].lower()
+    assert (
+        "execution blocked" in headline
+        or "automation_blocked" in headline
+        or report["tests_total"] > 0
+    ), report["headline"]
 
     assert "<!doctype html>" in report["html"].lower()
 
