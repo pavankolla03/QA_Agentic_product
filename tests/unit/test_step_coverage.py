@@ -272,3 +272,40 @@ def test_generated_names_do_not_repeat_the_verb(step: str, expected: str) -> Non
     """`fillFillFullName` and `fillEnterResidentSEmail` are what happens when
     the prefix and the tail both carry the action."""
     assert method_name_for(step, action_for(step)) == expected
+
+
+# --------------------------------------------------------------------------- #
+# What counts as a method a step may call
+# --------------------------------------------------------------------------- #
+def test_a_private_getter_is_not_offered_as_an_action() -> None:
+    """One wrong index entry produced two compile errors per use.
+
+    `private get fullName()` matches the same pattern as a method. Recorded as
+    a member, it was handed to the gap resolver as something a step could call,
+    which generated `residentRegistrationPage.fullName(value)` — private, and a
+    getter, so not callable either.
+    """
+    from services.knowledge_service.code_parser import parse_typescript
+
+    source = """import { BasePage } from './BasePage';
+
+export class LoginPage extends BasePage {
+  private get username() {
+    return this.page.getByTestId('login-username');
+  }
+
+  protected helper(): void {}
+
+  set theme(value: string) {}
+
+  async login(user: string, password: string): Promise<void> {}
+
+  async expectLoginError(message: string): Promise<void> {}
+}
+"""
+    members = parse_typescript("tests/pages/LoginPage.ts", source).symbols[0].members
+
+    assert members == ["expectLoginError", "login"], members
+    assert "username" not in members, "a private getter is neither callable nor visible"
+    assert "helper" not in members, "protected is not reachable from a step file"
+    assert "theme" not in members, "a setter is not a call"

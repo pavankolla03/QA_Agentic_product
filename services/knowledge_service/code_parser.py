@@ -40,6 +40,23 @@ TS_TYPE_RE = re.compile(
     r"^\s*(?:export\s+)?(?:type|interface)\s+(?P<name>[A-Za-z_$][\w$]*)",
     re.MULTILINE,
 )
+#: Control-flow keywords that look like a call at the start of a line.
+_NOT_A_METHOD = frozenset(
+    {"constructor", "if", "for", "while", "switch", "catch", "function"}
+)
+
+
+def _is_hidden(modifiers: str | None) -> bool:
+    """Is this member unusable from outside the class?
+
+    `private` and `protected` say so outright. `get` and `set` are property
+    accessors: real, public, and not callable — writing `page.fullName()` when
+    `fullName` is a getter is a type error, not a call.
+    """
+    words = (modifiers or "").split()
+    return any(word in ("private", "protected", "get", "set") for word in words)
+
+
 TS_METHOD_RE = re.compile(
     r"^\s{2,}(?P<modifiers>(?:public|private|protected|readonly|static|async|get|set)\s+)*"
     r"(?P<name>[A-Za-z_$][\w$]*)\s*\((?P<args>[^)]*)\)\s*(?::\s*(?P<ret>[^{;]+))?\s*\{",
@@ -111,10 +128,17 @@ def parse_typescript(rel_path: str, text: str) -> ParsedFile:
         base = match.group("base")
         kind = _classify_ts(rel_path, name, base)
         body = _class_body(text, match.end())
+        # Only what another file could legitimately call. A `private get
+        # fullName()` matches the same pattern as a method and is neither
+        # callable nor visible — recorded as a member, it was offered to the
+        # step generator as an action, which produced
+        # `residentRegistrationPage.fullName(value)`: private, and a getter, so
+        # two compile errors from one wrong entry.
         members = [
             m.group("name")
             for m in TS_METHOD_RE.finditer(body)
-            if m.group("name") not in ("constructor", "if", "for", "while", "switch", "catch", "function")
+            if m.group("name") not in _NOT_A_METHOD
+            and not _is_hidden(m.group("modifiers"))
         ]
         symbols.append(
             RepoSymbol(

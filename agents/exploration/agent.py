@@ -185,7 +185,11 @@ class ExplorationAgent(BaseAgent):
         browser = str(data.get("browser", "") or "")
         if browser:
             ctx.note(f"explored with {browser}")
-        if not snapshots:
+        # Crawling nothing is only a problem when nothing is *known*. A run
+        # that answered every route from the application map crawled zero pages
+        # by design, and warning about it read as a failure in a run that had
+        # done exactly the right thing.
+        if not snapshots and not app_map.catalog():
             detail = probe_errors[0][:200] if probe_errors else "the probe returned no pages"
             ctx.warn(
                 f"exploration reached no pages ({detail}). Locators cannot be verified, "
