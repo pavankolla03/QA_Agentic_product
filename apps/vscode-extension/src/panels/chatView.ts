@@ -114,15 +114,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!explicit) {
       this.post({ type: 'thinking' });
       try {
-        const reply = await this.api.chat(projectId, text);
-        if (reply.kind === 'reply') {
-          this.post({ type: 'assistantMessage', text: reply.text, suggestions: reply.suggestions });
+        let started = false;
+        const outcome = await this.api.chatStream(projectId, text, (token) => {
+          // The first token replaces the thinking indicator; the rest append
+          // to the same bubble, so the answer is read as it is written.
+          this.post({ type: started ? 'assistantToken' : 'assistantStart', text: token });
+          started = true;
+        });
+
+        if (outcome.kind === 'reply') {
+          this.post({ type: 'assistantEnd', suggestions: outcome.suggestions });
           return;
         }
-        await this.startRun(text, reply.mode ?? chosenMode ?? 'full', {}, { echo: false });
+        await this.startRun(text, outcome.mode ?? chosenMode ?? 'full', {}, { echo: false });
         return;
       } catch {
-        // The classifier is a convenience, not a gate. If the control plane
+        // Classification is a convenience, not a gate. If the control plane
         // cannot be reached the message still becomes a run, which is what it
         // would have done before any of this existed.
         this.post({ type: 'thinkingDone' });

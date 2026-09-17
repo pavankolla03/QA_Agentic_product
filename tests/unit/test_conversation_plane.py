@@ -170,3 +170,59 @@ def test_one_router_is_reused_across_chat_messages() -> None:
 
     engine = AgentEngine(offline=True)
     assert engine.chat_router is engine.chat_router
+
+
+# --------------------------------------------------------------------------- #
+# Streaming
+# --------------------------------------------------------------------------- #
+def test_every_chat_outcome_uses_the_same_frame_sequence() -> None:
+    """One code path in the client, not three.
+
+    A deterministic answer, a model-backed answer and a run request are three
+    very different things; making the client branch on which it got would mean
+    three places for the panel to get stuck.
+    """
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "services" / "api_gateway" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    stream = source[source.index('@api.post("/chat/stream"'):]
+    stream = stream[: stream.index("\ndef _chat_context(")]
+
+    for event in ("chat_started", "token", "chat_finished", "run_suggested"):
+        assert f'"{event}"' in stream, f"{event} is never emitted"
+
+    assert "media_type=\"text/event-stream\"" in stream
+    assert "X-Accel-Buffering" in stream, (
+        "a proxy that buffers the whole response defeats the point of streaming"
+    )
+
+
+def test_a_deterministic_answer_is_not_dripped_out() -> None:
+    """It is already complete when produced; withholding it would be theatre."""
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "services" / "api_gateway" / "app.py"
+    ).read_text(encoding="utf-8")
+    stream = source[source.index('@api.post("/chat/stream"'):]
+    stream = stream[: stream.index("\ndef _chat_context(")]
+
+    deterministic = stream[stream.index("if answer is not None:"):]
+    deterministic = deterministic[: deterministic.index("context = _chat_context(")]
+    assert deterministic.count('frame("token"') == 1, "the whole answer, in one frame"
+
+
+def test_streaming_never_switches_model_mid_answer() -> None:
+    """Half a sentence from one model and half from another is worse than a
+    short answer: the words already on screen would not match what follows."""
+    router = (
+        __import__("pathlib").Path(__file__).resolve().parents[2]
+        / "services" / "model_router" / "router.py"
+    ).read_text(encoding="utf-8")
+
+    stream = router[router.index("    async def stream("):]
+    stream = stream[: stream.index("\n    async def status(")]
+    assert "if produced:" in stream and "return" in stream, (
+        "a failure after the first token must stop, not restart elsewhere"
+    )

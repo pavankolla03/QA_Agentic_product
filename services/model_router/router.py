@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -553,6 +553,80 @@ class ModelRouter:
                 self.trace_sink(trace)
             except Exception:  # noqa: BLE001 - tracing must never break a run
                 log.exception("trace sink failed")
+
+    async def stream(
+        self,
+        messages: Sequence[Any],
+        *,
+        capability: Capability | str | None = None,
+        task: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream one completion, first healthy candidate wins.
+
+        Deliberately simpler than `complete`: no budget pre-flight, no retry,
+        no fallback chain past the first provider that answers. Streaming is
+        for calls somebody is watching, and a silent switch to a second model
+        halfway through a sentence is worse than a short answer — the words
+        already on screen would not match what follows.
+
+        A failure before the first token falls through to the next candidate.
+        After the first token, the caller keeps what arrived.
+        """
+        tier = self.tier_for(task=task, explicit=capability)
+        policy = self.policy_for(tier)
+        request = LLMRequest(
+            messages=list(messages),
+            temperature=self.default_temperature if temperature is None else temperature,
+            max_tokens=(
+                max_tokens
+                if max_tokens is not None
+                else int(policy.get("max_output_tokens", self.default_max_tokens))
+            ),
+            timeout_seconds=int(policy.get("timeout_seconds", self.default_timeout)),
+            task=task,
+        )
+
+        last_error: Exception | None = None
+        for candidate in self.candidates(tier):
+            if not await self._usable(candidate):
+                continue
+            request.model = candidate.model
+            provider = self.provider(candidate.provider)
+            if provider is None:
+                continue
+
+            started = time.perf_counter()
+            produced = False
+            try:
+                async for piece in provider.stream(request):
+                    produced = True
+                    yield piece
+            except Exception as exc:  # noqa: BLE001 - try the next candidate
+                last_error = exc
+                self.stats.failures += 1
+                if produced:
+                    # Mid-sentence. Stopping here is honest; restarting on
+                    # another model would contradict what is already on screen.
+                    log.warning("stream from %s failed after output: %s", candidate.model, exc)
+                    return
+                continue
+
+            self._emit_trace(
+                LLMCallTrace(
+                    run_id="", trace_id="", agent=None,
+                    provider=candidate.provider, model=request.model,
+                    capability=_as_capability(tier),
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    status="succeeded",
+                )
+            )
+            return
+
+        if last_error is not None:
+            raise last_error
+        raise ProviderError("router", f"no usable model for tier {tier}", retryable=True)
 
     async def status(self) -> dict[str, Any]:
         """Health + routing snapshot for the control plane UI."""

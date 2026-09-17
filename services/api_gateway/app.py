@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +27,13 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, delete, desc, func, select
 
@@ -535,6 +543,82 @@ async def chat(payload: ChatIn, principal: Principal = requires("run:read")) -> 
             "needs no model at all."
         )
     return ChatOut(kind="reply", text=reply)
+
+
+@api.post("/chat/stream", tags=["runs"])
+async def chat_stream(payload: ChatIn, principal: Principal = requires("run:read")):
+    """The same decision as `/api/chat`, delivered as it is made.
+
+    Every outcome uses the same frame sequence, so the client has one code path
+    rather than three:
+
+        chat_started
+        token ...            (deterministic answers arrive as a single token)
+        chat_finished        or  run_suggested
+
+    A deterministic answer is already complete when it is produced, so it is
+    sent whole. Only the model-backed path genuinely streams — and that is the
+    one where four seconds of silence used to look like a broken panel.
+    """
+    resolution = resolve(payload.message)
+    project_id = payload.project_id or ""
+
+    async def frames() -> AsyncIterator[str]:
+        def frame(event: str, data: dict[str, Any]) -> str:
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+        yield frame("chat_started", {"intent": resolution.intent.value})
+
+        if resolution.intent.starts_a_run:
+            yield frame("run_suggested", {"mode": resolution.mode.value})
+            return
+
+        answer = ConversationService(
+            project_id=project_id, org_id=principal.org_id
+        ).answer(resolution)
+        if answer is not None:
+            yield frame("token", {"text": answer.text})
+            yield frame(
+                "chat_finished",
+                {"suggestions": answer.suggestions or [], "source": "deterministic"},
+            )
+            return
+
+        context = _chat_context(project_id, principal)
+        produced = False
+        try:
+            async for piece in _engine().answer_stream(payload.message, context=context):
+                produced = True
+                yield frame("token", {"text": piece})
+        except Exception as exc:  # noqa: BLE001 - a chat reply must never fail the panel
+            log.debug("chat stream failed", exc_info=True)
+            if not produced:
+                yield frame(
+                    "token",
+                    {
+                        "text": (
+                            "I could not reach a model in time to answer that. Ask me about a "
+                            "run, a failure or today's cost and I will answer from my own "
+                            "records, which needs no model at all."
+                        )
+                    },
+                )
+            yield frame("chat_finished", {"suggestions": [], "source": "error", "detail": str(exc)[:200]})
+            return
+
+        yield frame("chat_finished", {"suggestions": [], "source": "model"})
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Without this an intervening proxy will buffer the whole response
+            # and deliver it at once, which is precisely what streaming is for
+            # avoiding.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _chat_context(project_id: str, principal: Principal) -> str:

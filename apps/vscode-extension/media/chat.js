@@ -32,6 +32,8 @@
     progressBar: null,
     active: '',
     runClock: null,
+    // The bubble currently being written into, token by token.
+    streaming: null,
   };
 
   // ------------------------------------------------------------------ //
@@ -121,23 +123,57 @@
    */
   function renderAssistant(text, suggestions) {
     const wrap = el('div', 'assistant');
-    String(text || '').split(/\n\n+/).forEach(function (paragraph) {
-      wrap.appendChild(el('div', 'assistant-line', paragraph));
-    });
+    wrap.dataset.raw = String(text || '');
+    paint(wrap);
     if (suggestions && suggestions.length) {
-      const row = el('div', 'suggestions');
-      suggestions.forEach(function (suggestion) {
-        const button = el('button', 'suggestion', suggestion);
-        button.addEventListener('click', function () {
-          els.prompt.value = suggestion;
-          els.prompt.focus();
-        });
-        row.appendChild(button);
-      });
-      wrap.appendChild(row);
+      wrap.appendChild(suggestionRow(suggestions));
     }
     els.timeline.appendChild(wrap);
     scroll();
+    return wrap;
+  }
+
+  /* Re-render a bubble from the whole text it has received so far.
+   *
+   * A paragraph break only becomes visible once the text containing it has
+   * arrived, so the answer is re-split each time rather than guessed at from a
+   * fragment. Replies are a few hundred characters; this costs nothing and
+   * avoids a paragraph that never closes.
+   */
+  function paint(node) {
+    node.textContent = '';
+    String(node.dataset.raw || '').split(/\n\n+/).forEach(function (paragraph) {
+      node.appendChild(el('div', 'assistant-line', paragraph));
+    });
+  }
+
+  function appendToken(text) {
+    const node = state.streaming;
+    if (!node) return;
+    node.dataset.raw = (node.dataset.raw || '') + String(text || '');
+    paint(node);
+    scroll();
+  }
+
+  function finishStreaming(suggestions) {
+    const node = state.streaming;
+    state.streaming = null;
+    if (!node || !suggestions || !suggestions.length) return;
+    node.appendChild(suggestionRow(suggestions));
+    scroll();
+  }
+
+  function suggestionRow(suggestions) {
+    const row = el('div', 'suggestions');
+    suggestions.forEach(function (suggestion) {
+      const button = el('button', 'suggestion', suggestion);
+      button.addEventListener('click', function () {
+        els.prompt.value = suggestion;
+        els.prompt.focus();
+      });
+      row.appendChild(button);
+    });
+    return row;
   }
 
   function showThinking() {
@@ -689,6 +725,19 @@
       case 'assistantMessage':
         clearThinking();
         renderAssistant(message.text, message.suggestions || []);
+        break;
+
+      case 'assistantStart':
+        clearThinking();
+        state.streaming = renderAssistant(message.text, []);
+        break;
+
+      case 'assistantToken':
+        appendToken(message.text);
+        break;
+
+      case 'assistantEnd':
+        finishStreaming(message.suggestions || []);
         break;
 
       case 'runStarting':

@@ -320,14 +320,14 @@ def test_the_chat_asks_what_a_message_means_before_running_it() -> None:
     a greeting — which is exactly how a broken chat behaves.
     """
     view = (EXTENSION / "src" / "panels" / "chatView.ts").read_text(encoding="utf-8")
-    assert "this.api.chat(" in view, "nothing classifies the message"
+    assert "this.api.chatStream(" in view, "nothing classifies the message"
 
     submit = view[view.index("private async submit("):]
     submit = submit[: submit.index("\n  async startRun(")]
-    assert submit.index("this.api.chat(") < submit.index("this.startRun("), (
+    assert submit.index("this.api.chatStream(") < submit.index("this.startRun("), (
         "the classifier has to run first, or it has not saved anyone anything"
     )
-    assert "reply.kind === 'reply'" in submit
+    assert "outcome.kind === 'reply'" in submit
 
 
 def test_a_mode_the_user_picked_is_not_second_guessed() -> None:
@@ -384,3 +384,24 @@ def test_the_chat_endpoint_tries_the_database_before_a_model() -> None:
     assert chat.index("starts_a_run") < chat.index("ConversationService("), (
         "work should not be routed through the answerer"
     )
+
+
+def test_the_extension_consumes_the_stream_rather_than_waiting_for_it() -> None:
+    """Four seconds of silence reads as a broken panel; four seconds of words
+    appearing reads as an answer being written, which it is."""
+    client = (EXTENSION / "src" / "client" / "apiClient.ts").read_text(encoding="utf-8")
+    assert "chatStream(" in client
+    assert "/api/chat/stream" in client
+    assert "getReader()" in client, "a buffered read defeats the point"
+    assert r"indexOf('\n\n')" in client, (
+        "SSE frames end at a blank line and a chunk can split one anywhere"
+    )
+
+    view = (EXTENSION / "src" / "panels" / "chatView.ts").read_text(encoding="utf-8")
+    assert "this.api.chatStream(" in view
+    assert "assistantStart" in view and "assistantToken" in view
+
+    chat_js = (EXTENSION / "media" / "chat.js").read_text(encoding="utf-8")
+    for case in ("'assistantStart'", "'assistantToken'", "'assistantEnd'"):
+        assert f"case {case}:" in chat_js, f"no handler for {case}"
+    assert "function appendToken(" in chat_js

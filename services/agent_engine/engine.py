@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -148,6 +148,26 @@ class AgentEngine:
         )
         return (response.text or "").strip()
 
+
+    async def answer_stream(self, message: str, *, context: str = "") -> AsyncIterator[str]:
+        """The same reply as `answer`, a piece at a time.
+
+        Four seconds of nothing feels like a broken panel. The same four
+        seconds with words appearing feels like an answer being written, which
+        is what it is. Nothing about the answer changes — only when the reader
+        starts seeing it.
+        """
+        from packages.llm_provider.base import ChatMessage
+        from services.agent_engine.intent import ANSWER_SYSTEM
+
+        system = ANSWER_SYSTEM + (f"\n\n## This project\n{context}" if context else "")
+        async for piece in self.chat_router.stream(
+            [ChatMessage.system(system), ChatMessage.user(message)],
+            capability=Capability.INTERACTIVE_CHAT,
+            task="chat.answer",
+            temperature=0.3,
+        ):
+            yield piece
 
     # ------------------------------------------------------------------ #
     def create_run(self, request: RunRequest, user_id: str = "", org_id: str = "") -> str:

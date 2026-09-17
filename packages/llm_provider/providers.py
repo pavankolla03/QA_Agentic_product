@@ -7,10 +7,11 @@ failures as :class:`ProviderError` so the model router can fall back.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import time
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import httpx
@@ -165,6 +166,53 @@ class OpenAICompatibleProvider(BaseProvider):
             # honour this still produces usable output.
             payload["response_format"] = {"type": "json_object"}
         return payload
+
+    async def stream(self, req: LLMRequest) -> AsyncIterator[str]:
+        """Yield the completion a piece at a time, as the model writes it.
+
+        Worth the extra code only for calls somebody is watching. A chat answer
+        that takes four seconds feels like four seconds of nothing; the same
+        four seconds with words appearing feels like an answer being written,
+        which it is.
+
+        Anything unexpected in the stream is skipped rather than raised: a
+        malformed frame should cost one token of output, not the whole reply.
+        The caller still gets whatever arrived before the trouble.
+        """
+        payload = dict(self._payload(req))
+        payload["stream"] = True
+
+        async with _client(req.effective_timeout) as client:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}{self.chat_path}",
+                    headers=self._headers(),
+                    json=payload,
+                ) as resp:
+                    if resp.status_code >= 400:
+                        body = (await resp.aread()).decode("utf-8", "replace")
+                        raise ProviderError(
+                            self.name, f"HTTP {resp.status_code}: {body[:300]}",
+                            status=resp.status_code,
+                            retryable=resp.status_code in (408, 429, 500, 502, 503, 504),
+                        )
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {}) or {}
+                            piece = delta.get("content")
+                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                            continue
+                        if piece:
+                            yield piece
+            except httpx.HTTPError as exc:
+                raise ProviderError(self.name, f"{self.name} unreachable: {exc}", retryable=True) from exc
 
     async def _chat(self, req: LLMRequest) -> LLMResponse:
         async with _client(req.effective_timeout) as client:

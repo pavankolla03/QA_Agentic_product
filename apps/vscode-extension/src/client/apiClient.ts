@@ -451,6 +451,91 @@ export class ApiClient {
   }
 
   // -- runs ----------------------------------------------------------- //
+  /**
+   * Stream one chat answer, calling `onToken` as each piece arrives.
+   *
+   * Resolves to what the message turned out to be. A deterministic answer
+   * arrives as a single token and a run request as none at all, so the caller
+   * has one code path for all three outcomes rather than three.
+   *
+   * Streaming matters for exactly one case — the model-backed answer, where
+   * four seconds of silence reads as a broken panel. It costs nothing in the
+   * other two.
+   */
+  async chatStream(
+    projectId: string,
+    message: string,
+    onToken: (text: string) => void,
+  ): Promise<{ kind: 'reply' | 'run'; mode: RunMode; suggestions: string[] }> {
+    const key = await this.getApiKey();
+    if (!key) {
+      throw new ApiError(401, 'No API key configured.');
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+      body: JSON.stringify({ project_id: projectId, message }),
+    });
+    if (!response.ok || !response.body) {
+      throw new ApiError(response.status, `chat stream failed: ${response.statusText}`);
+    }
+
+    let outcome: { kind: 'reply' | 'run'; mode: RunMode; suggestions: string[] } = {
+      kind: 'reply',
+      mode: 'full',
+      suggestions: [],
+    };
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let event = '';
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are separated by a blank line, and a chunk can split one
+      // anywhere — including mid-frame. Keep the tail until its blank line
+      // arrives rather than parsing half a frame.
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            let data: Record<string, unknown>;
+            try {
+              data = JSON.parse(line.slice(5));
+            } catch {
+              continue;
+            }
+            if (event === 'token' && typeof data.text === 'string') {
+              onToken(data.text);
+            } else if (event === 'run_suggested') {
+              outcome = { kind: 'run', mode: (data.mode as RunMode) ?? 'full', suggestions: [] };
+            } else if (event === 'chat_finished') {
+              outcome = {
+                kind: 'reply',
+                mode: 'full',
+                suggestions: Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [],
+              };
+            }
+          }
+        }
+      }
+    }
+    return outcome;
+  }
+
   /** Answer one chat message, or say it warrants a run. */
   chat(projectId: string, message: string): Promise<ChatReply> {
     return this.request<ChatReply>('/api/chat', {
