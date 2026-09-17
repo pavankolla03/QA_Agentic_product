@@ -285,3 +285,114 @@ def test_a_clean_run_still_reports_normally() -> None:
         "blocked_steps": [],
     }
     assert _headline(facts) == "6/6 tests passing (100.0%)"
+
+
+# --------------------------------------------------------------------------- #
+# A gap closed against the wrong page
+# --------------------------------------------------------------------------- #
+# Found in a real autopilot run against the demo application. The step
+# "I submit the form with all fields completed", belonging to the *residents*
+# form, was bound to `LoginPage.submit()` — the best-scoring `submit` anywhere
+# in the repository — and recorded as a closed gap. The generated file then read
+#
+#     loginPage ??= new LoginPage(this.page);
+#     await loginPage.submit();
+#
+# in a file that imports neither, which failed to compile and took the whole
+# suite with it. Two defects, and the compile error is the lesser one: had the
+# import been right, the suite would have gone green having signed in instead of
+# submitting the form under test.
+SUBMIT_GAP = """When('I submit the form with all fields completed', async function () {
+  residentsPage ??= new ResidentsPage(this.page);
+  await residentsPage.submitEverything();
+});
+"""
+
+
+class _Symbol:
+    def __init__(self, name: str, members: set[str]) -> None:
+        self.name = name
+        self.members = sorted(members)
+
+
+class _Profile:
+    """A repository holding two pages, only one of which is under test."""
+
+    def __init__(self, pages: dict[str, set[str]]) -> None:
+        self._pages = pages
+
+    def symbols_of(self, kind: str) -> list[_Symbol]:
+        if kind != "page_object":
+            return []
+        return [_Symbol(name, members) for name, members in self._pages.items()]
+
+
+def _run_with_repo(steps_source: str, pages: dict[str, set[str]]):
+    bundle = CodeBundle(
+        run_id="r", plan_id="p",
+        changes=[
+            FileChange(path="tests/pages/ResidentsPage.ts", kind=ArtifactKind.PAGE_OBJECT, content=PAGE),
+            FileChange(path="tests/steps/residents.steps.ts", kind=ArtifactKind.STEP_DEFINITION, content=steps_source),
+        ],
+    )
+    ctx = AgentContext(
+        run_id="r",
+        project=Project(org_id="o", name="p", repository_path="."),
+        instruction="x",
+        mode=RunMode.FULL,
+    )
+    ctx.code_bundle = bundle
+    ctx.metadata["locator_catalog"] = []
+    ctx.repo_profile = _Profile(pages)
+    asyncio.run(StepCoverageAgent().run(ctx))
+    return ctx, bundle
+
+
+def _steps_file(bundle: CodeBundle) -> str:
+    return next(c.content for c in bundle.changes if c.kind == ArtifactKind.STEP_DEFINITION)
+
+
+def test_a_step_is_never_bound_to_a_method_on_another_page() -> None:
+    """`submit` on the login page is not this form's `submit`.
+
+    However well the words score. A binding to the wrong page is worse than an
+    open gap: it compiles, it runs, and it verifies a different screen.
+    """
+    ctx, bundle = _run_with_repo(
+        _steps(SUBMIT_GAP),
+        {"LoginPage": {"submit", "signIn"}, "ResidentsPage": {"goto"}},
+    )
+    source = _steps_file(bundle)
+
+    assert "LoginPage" not in source
+    assert "loginPage" not in source
+    # Honestly unresolved rather than dishonestly closed.
+    assert ctx.metadata.get("automation_blocked")
+
+
+def test_the_same_page_is_still_reused() -> None:
+    """The rung must keep working for the case it exists for."""
+    _, bundle = _run_with_repo(
+        _steps(SUBMIT_GAP),
+        {"LoginPage": {"submit"}, "ResidentsPage": {"submitTheCompletedForm", "goto"}},
+    )
+    source = _steps_file(bundle)
+
+    assert "residentsPage.submitTheCompletedForm()" in source
+    assert "LoginPage" not in source
+
+
+def test_a_page_the_file_cannot_name_is_never_written_into_it() -> None:
+    """The backstop, in case a resolution ever crosses pages again.
+
+    `Cannot find name 'LoginPage'` does not fail one scenario, it fails the
+    compile, and a suite that does not compile runs nothing at all.
+    """
+    changes = [
+        FileChange(path="tests/pages/ResidentsPage.ts", kind=ArtifactKind.PAGE_OBJECT, content=PAGE),
+        FileChange(path="tests/steps/residents.steps.ts", kind=ArtifactKind.STEP_DEFINITION,
+                   content=_steps(SUBMIT_GAP)),
+    ]
+    assert StepCoverageAgent._can_reference(changes, "ResidentsPage")
+    assert not StepCoverageAgent._can_reference(changes, "LoginPage")
+

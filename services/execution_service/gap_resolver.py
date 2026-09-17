@@ -164,11 +164,21 @@ class GapResolver:
         self.route = route
 
     # ------------------------------------------------------------------ #
-    def resolve(self, step: str) -> Resolution:
-        """Walk the ladder. The first rung that holds wins."""
+    def resolve(self, step: str, page_class: str = "") -> Resolution:
+        """Walk the ladder. The first rung that holds wins.
+
+        `page_class` is the Page Object this step belongs to. Supplying it
+        confines the method search to that page, which matters more than it
+        sounds: without it, "I submit the form with all fields completed" on the
+        residents form matched `LoginPage.submit()` — the highest-scoring
+        `submit` anywhere in the repository — and the gap was recorded as
+        closed. A binding to the wrong page is worse than an open gap, because
+        it compiles and the suite goes green having exercised a different
+        screen entirely.
+        """
         return (
             self._existing_step(step)
-            or self._existing_method(step)
+            or self._existing_method(step, page_class)
             or self._from_catalogue(step)
             or self._blocked(step)
         )
@@ -200,9 +210,18 @@ class GapResolver:
         return None
 
     # -- 2. the capability exists, the binding does not ----------------- #
-    def _existing_method(self, step: str) -> Resolution | None:
+    def _existing_method(self, step: str, page_class: str = "") -> Resolution | None:
+        # Confined to the step's own page when one is known. A `submit` on some
+        # other screen is not this step's `submit`, however well the words score.
+        candidates = self.existing_methods
+        if page_class:
+            methods = candidates.get(page_class)
+            if not methods:
+                return None
+            candidates = {page_class: methods}
+
         best: tuple[float, str, str] | None = None
-        for page_class, methods in self.existing_methods.items():
+        for page_class, methods in candidates.items():
             for method in methods:
                 # Method names are camelCase; split them so "fillResidentName"
                 # is compared as three words rather than one.

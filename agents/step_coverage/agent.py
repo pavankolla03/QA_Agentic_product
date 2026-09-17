@@ -87,7 +87,7 @@ class StepCoverageAgent(BaseAgent):
             progress = 0
             blocked = []
             for step_text, page_class in gaps:
-                resolution = resolver.resolve(step_text)
+                resolution = resolver.resolve(step_text, page_class=page_class)
                 if not resolution.resolved:
                     blocked.append(resolution)
                     continue
@@ -205,6 +205,20 @@ class StepCoverageAgent(BaseAgent):
         if not target_class:
             return False
 
+        # The class has to be one this step file can actually name. Reusing
+        # `LoginPage.submit()` from a file that imports only ResidentsPage
+        # produced `Cannot find name 'LoginPage'` twice and broke the build —
+        # a "closed" gap that stopped the whole suite from compiling. The
+        # resolver no longer crosses pages, and this refuses to write it if it
+        # ever does again.
+        if not self._can_reference(changes, target_class):
+            resolution.strategy = "blocked"
+            resolution.reason = (
+                f"{target_class}.{resolution.method}() would do this, but this step file "
+                f"has no {target_class} to call it on"
+            )
+            return False
+
         if resolution.strategy == "generate_method" and not self._add_method(
             changes, target_class, resolution
         ):
@@ -227,6 +241,23 @@ class StepCoverageAgent(BaseAgent):
         return self._rewrite_step(
             changes, step_text, f"{resolution.method}({args})", page_class=target_class
         )
+
+    @staticmethod
+    def _can_reference(changes: list[FileChange], page_class: str) -> bool:
+        """Is this Page Object in scope in the step file, or generated alongside it?
+
+        Either is enough: a class the file already imports can be called, and
+        one being written in this same bundle will be imported by the renderer.
+        A class that is neither is a name that does not exist at compile time.
+        """
+        for change in changes:
+            if change.kind == ArtifactKind.PAGE_OBJECT:
+                if re.search(rf"export class {re.escape(page_class)}\b", change.content):
+                    return True
+            elif change.kind == ArtifactKind.STEP_DEFINITION:
+                if re.search(rf"\b{re.escape(page_class)}\b", change.content):
+                    return True
+        return False
 
     @staticmethod
     def _step_arguments(changes: list[FileChange], step_text: str) -> list[str]:
