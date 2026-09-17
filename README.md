@@ -1,12 +1,19 @@
 # QAgentic
 
-**A cost-optimized autonomous QA engineering platform.** You describe a feature;
-the platform reads your repository, explores the running application, designs a
-risk-based test plan, writes Playwright + BDD + Page Object automation that
-matches your team's conventions, runs it, diagnoses failures, repairs the ones
-that are test problems, and reports what it did and what it cost.
+**A cost-optimized autonomous QA engineering platform.** You describe a feature —
+or you just paste a URL. The platform reads your repository, explores the running
+application, designs a risk-based test plan, writes Playwright + BDD + Page Object
+automation that matches your team's conventions, runs it, diagnoses failures,
+repairs the ones that are test problems, and reports what it did and what it cost.
 
 The QA engineer is the **reviewer and approver**, not the typist.
+
+Give it nothing but a URL and the application becomes the specification: it
+crawls what is there, names the features it can actually see — a form with a
+password field is a sign-in, a required field is a rejection path — and automates
+those. What it cannot see, it does not write a test for, and it says so. Reach it
+from VS Code, Slack, Teams, WhatsApp, a voice call, CI or the API; all of them go
+through one gateway, so a message means the same thing wherever you send it.
 
 The central design constraint is cost: **do not ask an LLM to rediscover what the
 platform already knows.**
@@ -14,10 +21,14 @@ platform already knows.**
 ```
                           QA ENGINEER
                                │
+       ┌───────────┬───────────┼───────────┬───────────┐
+       ▼           ▼           ▼           ▼           ▼
+    VS Code   Slack/Teams   WhatsApp     voice      CI/API
+       └───────────┴───────────┼───────────┴───────────┘
                                ▼
               ┌────────────────────────────────┐
-              │        VS CODE EXTENSION       │
-              │  12 panels · 34 commands       │
+              │      INTERACTION GATEWAY       │
+              │ one envelope in, one reply out │
               └────────────────┬───────────────┘
                                │ REST + WebSocket
                                ▼
@@ -95,6 +106,36 @@ aiqa run start <project-id> "Automate the Resident Registration functionality"
 ```
 
 The run stops at the first approval gate and prints the command to approve it.
+
+Naming a feature gives a sharper plan, but it is not required. A URL on its own
+is a complete instruction:
+
+```bash
+aiqa run start <project-id> "http://localhost:3000"
+```
+
+The application is then the specification. Exploration crawls it, names the
+features it can see, and those become the acceptance criteria — so the plan
+covers what is actually there rather than what a model expects a site like that
+to have. If the crawl reaches nothing, the run fails naming the URL instead of
+inventing a suite for a page it never loaded.
+
+### From Slack, Teams, WhatsApp, voice or CI
+
+Every channel posts to the same gateway and gets the same understanding of what
+was said. `GET /api/channels` lists the endpoints.
+
+```bash
+curl -X POST http://localhost:8080/api/channels/slack   -H "X-API-Key: $AIQA_API_KEY" -H 'Content-Type: application/json'   -d '{"event": {"text": "http://localhost:3000", "user": "U1", "channel": "C1"}}'
+```
+
+Webhooks authenticate with the platform's own API key, not with the provider's
+payload: a Slack body says which Slack user is speaking, never what they are
+allowed to start.
+
+A conversation remembers its project after the first message. In an installation
+with several projects, one that has never named a project is asked rather than
+pointed at whichever was registered most recently.
 
 ### VS Code
 
