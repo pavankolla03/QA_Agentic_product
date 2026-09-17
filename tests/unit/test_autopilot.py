@@ -295,3 +295,52 @@ def test_test_design_refuses_an_autopilot_run_that_discovered_nothing() -> None:
 
     with pytest.raises(ValueError, match="nothing testable was discovered at https://unreachable.test"):
         asyncio.run(TestDesignAgent().run(ctx))
+
+
+def test_autopilot_does_not_crawl_words_from_its_own_placeholder_title() -> None:
+    """Guessing routes from words only works when the words describe a feature.
+
+    In autopilot the requirement is the one exploration is about to write, and
+    its placeholder reads "Automate the application at <url>". Inflecting that
+    produced /automate, /automates, /automate/new and /application: three 404s
+    and a page of wasted crawl budget every run, from a sentence the platform
+    had written to itself. The link graph is the real source, and the crawler
+    already follows it.
+    """
+    ctx = _ctx("http://app.test")
+    ctx.metadata.update({"autopilot": True, "target_url": "http://app.test"})
+    ctx.requirement = Requirement(
+        raw_input="http://app.test", title="Automate the application at http://app.test"
+    )
+
+    routes = ExplorationAgent()._candidate_routes(ctx, _map())
+
+    assert "/automate" not in routes
+    assert "/application" not in routes
+    assert routes[0] == "/"
+
+
+def test_a_named_feature_still_guesses_from_its_words() -> None:
+    ctx = _ctx("Automate the registration form")
+    ctx.requirement = Requirement(raw_input="x", title="Resident registration")
+
+    routes = ExplorationAgent()._candidate_routes(ctx, _map())
+
+    assert "/registration" in routes
+
+
+def test_autopilot_spends_its_whole_page_budget_on_following_links() -> None:
+    """A named feature wants the routes it asked for; autopilot wants the app.
+
+    Capping at "what we could name, plus two" meant a thirty-page allowance
+    crawled three pages, because the only route anyone can name up front is the
+    front door.
+    """
+    ctx = _ctx("http://app.test")
+    ctx.metadata.update({"autopilot": True, "max_explore_pages": 30})
+    assert ExplorationAgent()._page_budget(ctx, ["/"]) == 30
+
+    ordinary = _ctx("automate the login page")
+    ordinary.metadata["max_explore_pages"] = 30
+    assert ExplorationAgent()._page_budget(ordinary, ["/login"]) == 3
+

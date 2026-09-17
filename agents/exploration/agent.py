@@ -405,10 +405,19 @@ class ExplorationAgent(BaseAgent):
         """
         explicit = _explicit_paths(_requirement_text(ctx))
         routes: list[str] = [*explicit, "/"]
-        title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
-        words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
-        for word in words[:3]:
-            routes.extend([f"/{word}", f"/{word}s", f"/{word}/new"])
+
+        # Guessing from words only works when the words describe a feature. In
+        # autopilot the requirement is one this agent will write *after* the
+        # crawl, and its placeholder title is "Automate the application at
+        # <url>" — so the guesses were /automate, /automates, /automate/new and
+        # /application, three 404s and a wasted page of crawl budget every run,
+        # taken from a sentence the platform wrote to itself. The link graph is
+        # the real source here, and the crawler follows it.
+        if not ctx.metadata.get("autopilot"):
+            title = (ctx.requirement.title if ctx.requirement else ctx.instruction) or ""
+            words = [w.lower() for w in title.replace("-", " ").split() if len(w) > 3]
+            for word in words[:3]:
+                routes.extend([f"/{word}", f"/{word}s", f"/{word}/new"])
         for common in ("/login", "/dashboard"):
             routes.append(common)
         # Known routes are cheap to include: the map answers them without a crawl.
