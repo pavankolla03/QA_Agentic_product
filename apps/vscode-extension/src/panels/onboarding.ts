@@ -98,7 +98,7 @@ export class Onboarding {
     let state = await this.inspect();
     if (state.ready && state.baseUrl) {
       if (!options.silentIfReady) {
-        void vscode.window.showInformationMessage('AI QA: everything is set up.');
+        void vscode.window.showInformationMessage('QAgentic: everything is set up.');
       }
       await this.context.globalState.update(SHOWN_KEY, true);
       return state;
@@ -108,7 +108,7 @@ export class Onboarding {
       const started = await this.ensureServer();
       if (!started) {
         void vscode.window.showErrorMessage(
-          'AI QA: the control plane could not be started. Run `aiqa serve` from the platform directory.',
+          'QAgentic: the control plane could not be started. Run `aiqa serve` from the platform directory.',
         );
         return state;
       }
@@ -125,7 +125,7 @@ export class Onboarding {
       }
       state = await this.inspect();
       if (!state.credentialsOk) {
-        void vscode.window.showErrorMessage(`AI QA: ${state.blocker}.`);
+        void vscode.window.showErrorMessage(`QAgentic: ${state.blocker}.`);
         return state;
       }
     }
@@ -142,7 +142,7 @@ export class Onboarding {
 
     if (state.ready && !state.baseUrl) {
       void vscode.window.showWarningMessage(
-        'AI QA: this project has no application URL. Generation will work, but nothing can be ' +
+        'QAgentic: this project has no application URL. Generation will work, but nothing can be ' +
           'explored, so locators cannot be verified.',
       );
     }
@@ -167,7 +167,7 @@ export class Onboarding {
       return;
     }
     const picked = await vscode.window.showInformationMessage(
-      `AI QA Engineer needs a moment of setup — ${state.blocker}.`,
+      `QAgentic needs a moment of setup — ${state.blocker}.`,
       'Set it up',
       'Not now',
     );

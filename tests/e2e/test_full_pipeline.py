@@ -211,7 +211,7 @@ async def test_report_is_complete_and_honest(completed_run) -> None:
     assert report["scenarios_designed"] > 0
 
     markdown = report["markdown"]
-    assert "# AI QA run" in markdown
+    assert "# QAgentic run" in markdown
     assert "## Summary" in markdown
     assert "## Next actions" in markdown
     # The fixture has no Playwright and no crawl, so there are two honest

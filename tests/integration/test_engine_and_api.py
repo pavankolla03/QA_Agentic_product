@@ -362,7 +362,7 @@ def test_full_run_through_the_api(api_client, repo_copy) -> None:
     assert api_client.get(f"/api/runs/{run_id}/events").json()["count"] > 0
     trace = api_client.get(f"/api/runs/{run_id}/trace").json()
     assert trace["llm_calls"] and trace["tool_calls"] and trace["audit"]
-    assert "# AI QA run" in api_client.get(f"/api/runs/{run_id}/report?format=markdown").text
+    assert "# QAgentic run" in api_client.get(f"/api/runs/{run_id}/report?format=markdown").text
 
 
 def test_rbac_is_enforced_over_http(api_client) -> None:

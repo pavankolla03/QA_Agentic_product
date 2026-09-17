@@ -144,7 +144,7 @@ async def _ask(
             headers={
                 "Authorization": f"Bearer {key}",
                 "HTTP-Referer": "https://github.com/aiqa-engineer",
-                "X-Title": "AI QA Engineer",
+                "X-Title": "QAgentic",
             },
             json={
                 "model": model,

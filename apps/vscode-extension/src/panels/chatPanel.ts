@@ -41,7 +41,7 @@ export class ChatPanel {
     }
     const panel = vscode.window.createWebviewPanel(
       ChatPanel.viewType,
-      'AI QA Engineer',
+      'QAgentic',
       column,
       { enableScripts: true, retainContextWhenHidden: true },
     );
@@ -270,13 +270,13 @@ export class ChatPanel {
       content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="${style}" rel="stylesheet">
-<title>AI QA Engineer</title>
+<title>QAgentic</title>
 </head>
 <body>
   <header id="header">
     <div class="brand">
       <span class="dot" id="statusDot"></span>
-      <strong>AI QA Engineer</strong>
+      <strong>QAgentic</strong>
       <span class="muted" id="statusText">connecting…</span>
     </div>
     <div class="meters">
@@ -332,13 +332,13 @@ export class ChatPanel {
  */
 export async function showDiffDocument(approval: Approval): Promise<void> {
   const files = (approval.payload?.files ?? []) as { path: string }[] | undefined;
-  const title = files?.length ? `AI QA: ${files.length} proposed change(s)` : `AI QA: ${approval.kind}`;
+  const title = files?.length ? `QAgentic: ${files.length} proposed change(s)` : `QAgentic: ${approval.kind}`;
 
   const document = await vscode.workspace.openTextDocument({
     content:
       `# ${approval.title}\n#\n` +
       `# ${approval.description.split('\n').join('\n# ')}\n#\n` +
-      `# Approve or reject from the AI QA sidebar or the chat panel.\n\n` +
+      `# Approve or reject from the QAgentic sidebar or the chat panel.\n\n` +
       (approval.diff_preview || '(no diff available)'),
     language: 'diff',
   });

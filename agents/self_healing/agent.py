@@ -224,7 +224,7 @@ class SelfHealingAgent(BaseAgent):
             if match:
                 old_snippet = match.group(0)
                 new_snippet = (
-                    f"{match.group('indent')}// AI QA: replaced a fixed wait with a web-first expectation"
+                    f"{match.group('indent')}// QAgentic: replaced a fixed wait with a web-first expectation"
                 )
                 updated = source.replace(old_snippet, new_snippet, 1)
                 return HealProposal(

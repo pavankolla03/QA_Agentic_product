@@ -299,7 +299,7 @@ async def main(live: bool = False, keep: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AI QA Engineer end-to-end self-check")
+    parser = argparse.ArgumentParser(description="QAgentic end-to-end self-check")
     parser.add_argument("--live", action="store_true", help="use configured LLM providers instead of offline mode")
     parser.add_argument("--keep", action="store_true", help="keep the temporary workspace for inspection")
     args = parser.parse_args()

@@ -19,12 +19,12 @@ command has to be remembered:
 | **Activity bar** | the **beaker** icon on the far left — its sidebar holds the chat and nothing else |
 | **Keyboard** | `Ctrl+Alt+Q` (`Cmd+Alt+Q` on macOS) |
 | **Editor title bar** | the beaker button at the top right of whatever file you are reading |
-| **Status bar** | `$(beaker) AI QA`, bottom right |
+| **Status bar** | `$(beaker) QAgentic`, bottom right |
 
 The chat also opens with the window. If you would rather it did not, turn off
 **`aiqa.revealChatOnStartup`** in settings.
 
-> **Two icons, not one.** The beaker is the chat. The second icon, *AI QA
+> **Two icons, not one.** The beaker is the chat. The second icon, *QAgentic
 > Engineer*, holds approvals, runs, failures, healing, coverage and cost.
 > They were one container until the chat became a two-line strip above eleven
 > trees — contributed, registered, resolved, and invisible.
@@ -34,7 +34,7 @@ The chat also opens with the window. If you would rather it did not, turn off
 ## 0b. First run
 
 If anything is unconfigured the extension offers to set it up, and
-**AI QA: Set Up** runs the same walkthrough at any time. It checks four things
+**QAgentic: Set Up** runs the same walkthrough at any time. It checks four things
 in order and stops at the first it cannot satisfy:
 
 1. the control plane is running (it starts one if needed);
@@ -91,7 +91,7 @@ A small Playwright + Cucumber repository with an existing `LoginPage`,
 `BasePage` and `login.feature`. It is there so you can see the platform *reuse*
 existing conventions rather than inventing its own.
 
-The extension (`ai-qa-engineer-0.1.0`) is already installed. You should see a
+The extension (`qagentic-0.1.0`) is already installed. You should see a
 beaker icon in the Activity Bar.
 
 ---
@@ -109,7 +109,7 @@ Open Settings (`Ctrl+,`), search `aiqa`, and set:
 The project is already registered against
 `C:\Users\Pavan.Kolla\Desktop\aiqa-demo` with base URL `http://127.0.0.1:8123`.
 
-To register a different repository instead, use **AI QA: Register Project**
+To register a different repository instead, use **QAgentic: Register Project**
 from the Command Palette (`Ctrl+Shift+P`) and the extension fills the id in for
 you.
 
@@ -123,16 +123,16 @@ you.
 The extension asks for the first one. Pasting an OpenRouter key there is
 refused at the prompt, and any key the server will not accept is refused
 before it is stored. If one was saved before that check existed, run
-**AI QA: Reset API Key**.
+**QAgentic: Reset API Key**.
 
-Check it worked with **AI QA: Check Connection and Providers**. Every tier
+Check it worked with **QAgentic: Check Connection and Providers**. Every tier
 should show an `openrouter/...:free` model.
 
 ---
 
 ## 4. Run something
 
-Command Palette → **AI QA: Automate** → describe a feature, for example:
+Command Palette → **QAgentic: Automate** → describe a feature, for example:
 
 > Automate the Resident Registration functionality
 
@@ -210,7 +210,7 @@ under test, found with no requirement and no LLM call.
 
 The same three are in the sidebar: coverage gaps appear under **Knowledge**
 (click one to start the run that closes it), suite health under **Healing**,
-and **AI QA: Run Exploratory Pass** in the Command Palette.
+and **QAgentic: Run Exploratory Pass** in the Command Palette.
 
 ---
 
@@ -321,10 +321,10 @@ pointing at `/residents/new` also discovered the login page that links back to
 it. The command prints a project id.
 
 **3. Point the extension at it.** Set `aiqa.projectId` to that id
-(`Ctrl+,` → search `aiqa`), or run **AI QA: Register Project** from the Command
+(`Ctrl+,` → search `aiqa`), or run **QAgentic: Register Project** from the Command
 Palette, which does both steps and fills the id in for you.
 
-**4. Run it.** Palette → **AI QA: Automate** → describe the feature in the terms
+**4. Run it.** Palette → **QAgentic: Automate** → describe the feature in the terms
 your team uses:
 
 > Automate the resident registration form: valid submission, required-field
@@ -363,7 +363,7 @@ production app is not.
 cd apps/vscode-extension
 npm run compile
 npx vsce package --allow-missing-repository
-code --install-extension ai-qa-engineer-0.1.0.vsix --force
+code --install-extension qagentic-0.1.0.vsix --force
 ```
 
 Then **Developer: Reload Window** in VS Code — a newly installed extension is

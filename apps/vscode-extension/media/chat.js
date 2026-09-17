@@ -1,4 +1,4 @@
-/* AI QA Engineer chat panel — webview controller.
+/* QAgentic chat panel — webview controller.
  *
  * Renders the live agent timeline, approval cards and the run summary. All DOM
  * construction goes through createElement/textContent, never innerHTML with

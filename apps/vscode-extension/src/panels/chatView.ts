@@ -160,7 +160,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!projectId) {
         this.post({
           type: 'error',
-          message: 'No project is bound to this workspace. Run "AI QA: Set Up" to finish configuring.',
+          message: 'No project is bound to this workspace. Run "QAgentic: Set Up" to finish configuring.',
         });
         return;
       }
@@ -347,7 +347,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; font-src ${webview.cspSource};">
 <link href="${style}" rel="stylesheet">
-<title>AI QA Engineer</title>
+<title>QAgentic</title>
 </head>
 <body class="sidebar">
   <div id="banner" class="banner" hidden></div>

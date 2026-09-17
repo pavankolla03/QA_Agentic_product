@@ -1,5 +1,5 @@
 /**
- * Typed client for the AI QA control plane.
+ * Typed client for the QAgentic control plane.
  *
  * Uses Node's global fetch (VS Code 1.85 ships Node 18+) so the extension has no
  * HTTP dependency. The API key is read from SecretStorage — never from settings
@@ -182,7 +182,7 @@ export class ApiClient {
           .getConfiguration('aiqa')
           .update('apiKey', '', vscode.ConfigurationTarget.Global);
         vscode.window.showInformationMessage(
-          'AI QA: your API key was moved from settings into the OS keychain.',
+          'QAgentic: your API key was moved from settings into the OS keychain.',
         );
         key = fromSettings;
       }
@@ -214,7 +214,7 @@ export class ApiClient {
   private async promptForApiKey(): Promise<string | undefined> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const entered = await vscode.window.showInputBox({
-        title: 'AI QA Engineer — control plane API key',
+        title: 'QAgentic — control plane API key',
         prompt:
           'The key printed by `aiqa init`. This is NOT your OpenRouter or OpenAI key — ' +
           'those belong in the server\'s .env file. Stored in the OS keychain.',
@@ -242,7 +242,7 @@ export class ApiClient {
         return candidate;
       }
       const retry = await vscode.window.showErrorMessage(
-        `AI QA: ${rejection}`,
+        `QAgentic: ${rejection}`,
         'Try again',
         'Cancel',
       );
@@ -291,7 +291,7 @@ export class ApiClient {
   ): Promise<T> {
     const key = await this.getApiKey();
     if (!key) {
-      throw new ApiError(401, 'No API key configured. Run "AI QA: Check Connection and Providers".');
+      throw new ApiError(401, 'No API key configured. Run "QAgentic: Check Connection and Providers".');
     }
 
     let response: Response;
@@ -307,7 +307,7 @@ export class ApiClient {
     } catch (err) {
       throw new ApiError(
         0,
-        `Cannot reach the AI QA control plane at ${this.baseUrl}. Start it with \`aiqa serve\`. (${String(err)})`,
+        `Cannot reach the QAgentic control plane at ${this.baseUrl}. Start it with \`aiqa serve\`. (${String(err)})`,
       );
     }
 

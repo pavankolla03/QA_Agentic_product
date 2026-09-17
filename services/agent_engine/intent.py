@@ -134,7 +134,7 @@ def classify(message: str) -> Intent:
     return Intent("reply", "", confident=False)
 
 
-ANSWER_SYSTEM = """You are the assistant inside an AI QA automation tool, answering in its chat panel.
+ANSWER_SYSTEM = """You are the assistant inside a QAgentic automation tool, answering in its chat panel.
 
 Answer the user's message in at most four sentences, plainly, with no preamble and no markdown headings.
 

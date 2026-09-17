@@ -1,4 +1,4 @@
-"""Shared domain types for the AI QA Engineer platform."""
+"""Shared domain types for the QAgentic platform."""
 
 from packages.aiqa_types.budget import (  # noqa: F401
     BudgetExceeded,

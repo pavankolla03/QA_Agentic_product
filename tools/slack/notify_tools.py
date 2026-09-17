@@ -66,7 +66,7 @@ class SlackNotifyTool(Tool):
 
     def _run(
         self,
-        title: str = "AI QA Engineer run",
+        title: str = "QAgentic run",
         text: str = "",
         status: str = "succeeded",
         payload: dict[str, Any] | None = None,
@@ -137,7 +137,7 @@ class TeamsNotifyTool(Tool):
 
     def _run(
         self,
-        title: str = "AI QA Engineer run",
+        title: str = "QAgentic run",
         text: str = "",
         status: str = "succeeded",
         payload: dict[str, Any] | None = None,

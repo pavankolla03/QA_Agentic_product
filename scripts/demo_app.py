@@ -226,7 +226,7 @@ class DemoApp:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Minimal application under test for AI QA Engineer")
+    parser = argparse.ArgumentParser(description="Minimal application under test for QAgentic")
     parser.add_argument("--port", type=int, default=8123)
     args = parser.parse_args()
     with DemoApp(args.port) as app:

@@ -23,7 +23,7 @@ if str(REPO_ROOT) not in sys.path:
 
 app = typer.Typer(
     name="aiqa",
-    help="AI QA Engineer — autonomous QA automation platform.",
+    help="QAgentic — autonomous QA automation platform.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -99,7 +99,7 @@ def worker(
     WorkerSettings.max_jobs = max(1, concurrency)
     console.print(
         Panel.fit(
-            f"[bold]AI QA worker[/bold]\n"
+            f"[bold]QAgentic worker[/bold]\n"
             f"queue         {url}\n"
             f"runs at once  {WorkerSettings.max_jobs}\n"
             f"db            {settings.database_url.split('://')[0]}",
@@ -140,7 +140,7 @@ def serve(
         raise typer.Exit(code=0)
     console.print(
         Panel.fit(
-            f"[bold]AI QA Engineer[/bold]\n"
+            f"[bold]QAgentic[/bold]\n"
             f"API      http://{bind_host}:{bind_port}/api\n"
             f"Docs     http://{bind_host}:{bind_port}/docs\n"
             f"Dashboard http://{bind_host}:{bind_port}/\n"

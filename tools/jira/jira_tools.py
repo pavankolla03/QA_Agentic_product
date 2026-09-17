@@ -247,7 +247,7 @@ class JiraCreateDefectTool(Tool):
                 "project": {"key": project_key},
                 "summary": summary[:250],
                 "issuetype": {"name": issue_type},
-                "labels": (labels or []) + ["ai-qa-engineer"],
+                "labels": (labels or []) + ["qagentic"],
                 "description": {
                     "type": "doc",
                     "version": 1,

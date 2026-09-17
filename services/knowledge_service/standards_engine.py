@@ -548,7 +548,7 @@ def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
-_DEFAULT_CONFIG = """# AI QA Engineer — project configuration.
+_DEFAULT_CONFIG = """# QAgentic — project configuration.
 # Merged on top of the organization baseline. Module files in .aiqa/modules/
 # override this in turn.
 
@@ -586,7 +586,7 @@ naming:
   test_id_prefix: "TC-"
 """
 
-_AIQA_README = """# `.aiqa/` — AI QA Engineer project knowledge
+_AIQA_README = """# `.aiqa/` — QAgentic project knowledge
 
 | Path | Purpose |
 |---|---|

@@ -1,4 +1,4 @@
-"""Central runtime settings + config-file loading for the AI QA platform.
+"""Central runtime settings + config-file loading for the QAgentic platform.
 
 Everything the platform needs to boot is resolved here:
   * environment variables (via .env, never exposed to agents)

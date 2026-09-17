@@ -318,7 +318,7 @@ class StandardsAgent(BaseAgent):
                 elif fix == "strip_hard_wait" and re.search(r"waitForTimeout\s*\(", lines[index]):
                     indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
                     lines[index] = (
-                        f"{indent}// removed by AI QA standards: replace with a web-first assertion"
+                        f"{indent}// removed by QAgentic standards: replace with a web-first assertion"
                     )
                     applied.append(f"{violation.rule_id}@{change.path}:{violation.line}")
             if drop:

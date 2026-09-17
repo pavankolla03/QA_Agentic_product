@@ -106,8 +106,8 @@ export class ServerManager implements vscode.Disposable {
       // engineer opens the repository they are testing, not this platform's
       // checkout, so nothing starts and every call 404s into a dead sidebar.
       this.fail(
-        `${cwd} is not an AI QA Engineer checkout, so the control plane cannot be started ` +
-          'from it. Run "AI QA: Set Up" to point at the platform directory, or start it ' +
+        `${cwd} is not a QAgentic checkout, so the control plane cannot be started ` +
+          'from it. Run "QAgentic: Set Up" to point at the platform directory, or start it ' +
           'yourself with `python -m services.api_gateway.cli serve`.',
       );
       return false;

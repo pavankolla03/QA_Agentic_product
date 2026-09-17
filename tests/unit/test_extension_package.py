@@ -22,7 +22,7 @@ import pytest
 
 EXTENSION = Path(__file__).resolve().parents[2] / "apps" / "vscode-extension"
 MANIFEST = EXTENSION / "package.json"
-VSIX = EXTENSION / "ai-qa-engineer-0.1.0.vsix"
+VSIX = EXTENSION / "qagentic-0.1.0.vsix"
 
 
 @pytest.fixture(scope="module")

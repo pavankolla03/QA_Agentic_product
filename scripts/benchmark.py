@@ -338,7 +338,7 @@ async def benchmark(runs: int, live: bool, keep: bool) -> int:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AI QA Engineer cost benchmark")
+    parser = argparse.ArgumentParser(description="QAgentic cost benchmark")
     parser.add_argument("--runs", type=int, default=4, help="how many runs to measure")
     parser.add_argument("--live", action="store_true", help="use configured providers instead of offline mode")
     parser.add_argument("--keep", action="store_true", help="keep the temporary workspace")

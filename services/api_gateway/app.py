@@ -1,4 +1,4 @@
-"""AI QA Control Plane — FastAPI application.
+"""QAgentic Control Plane — FastAPI application.
 
 The single ingress for the VS Code extension, the web dashboard and CI. Every
 route is authenticated, RBAC-checked and audited; every run is observable while
@@ -113,14 +113,14 @@ async def lifespan(app: FastAPI):
             "bootstrapped org=%s user=%s. API key comes from AIQA_BOOTSTRAP_API_KEY — change it before sharing.",
             info["org_id"], info["user_id"],
         )
-    log.info("AI QA control plane ready on %s:%s (env=%s)", settings.host, settings.port, settings.env)
+    log.info("QAgentic control plane ready on %s:%s (env=%s)", settings.host, settings.port, settings.env)
     yield
     with contextlib.suppress(Exception):
         await app.state.router.close()
 
 
 app = FastAPI(
-    title="AI QA Engineer — Control Plane",
+    title="QAgentic — Control Plane",
     description=(
         "Autonomous QA engineering platform. The LLM reasons; deterministic tools act; "
         "a human approves anything that touches the workspace."
@@ -1493,6 +1493,6 @@ async def dashboard() -> str:
     if index.exists():
         return index.read_text(encoding="utf-8")
     return (
-        "<h1>AI QA Engineer</h1>"
+        "<h1>QAgentic</h1>"
         "<p>Control plane is running. See <a href='/docs'>/docs</a> for the API.</p>"
     )

@@ -13,7 +13,7 @@ BEGIN = "<<<AIQA_EXPLORE_BEGIN>>>"
 END = "<<<AIQA_EXPLORE_END>>>"
 
 EXPLORER_MJS = r"""
-// AI QA Engineer — application exploration probe (generated; safe to delete).
+// QAgentic — application exploration probe (generated; safe to delete).
 import { chromium } from 'playwright';
 
 const BEGIN = '<<<AIQA_EXPLORE_BEGIN>>>';

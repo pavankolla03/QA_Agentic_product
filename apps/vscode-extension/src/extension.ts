@@ -1,5 +1,5 @@
 /**
- * AI QA Engineer — VS Code extension entry point.
+ * QAgentic — VS Code extension entry point.
  *
  * Everything the QA engineer does goes through here: starting runs, reviewing
  * diffs, approving, inspecting traces and cost. The extension holds no QA logic
@@ -42,7 +42,7 @@ const config = () => vscode.workspace.getConfiguration('aiqa');
 const projectId = () => config().get<string>('projectId', '');
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  output = vscode.window.createOutputChannel('AI QA Engineer', { log: true });
+  output = vscode.window.createOutputChannel('QAgentic', { log: true });
   api = new ApiClient(context);
 
   // The extension is useless without a control plane, so bring one up before
@@ -98,8 +98,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // -- status bar ---------------------------------------------------- //
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = 'aiqa.openChat';
-  statusBar.text = '$(beaker) AI QA';
-  statusBar.tooltip = 'AI QA Engineer — click to open chat';
+  statusBar.text = '$(beaker) QAgentic';
+  statusBar.tooltip = 'QAgentic — click to open chat';
   statusBar.show();
   context.subscriptions.push(statusBar);
 
@@ -186,7 +186,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   if (config().get<boolean>('revealChatOnStartup', true)) {
     void chat.reveal();
   }
-  output.info(`AI QA Engineer activated against ${api.baseUrl}`);
+  output.info(`QAgentic activated against ${api.baseUrl}`);
 }
 
 export function deactivate(): void {
@@ -211,7 +211,7 @@ function wrap(id: string, handler: (...args: any[]) => unknown) {
       // from here, so offer the fix rather than instructions for it.
       const unreachable = err instanceof ApiError && err.status === 0;
       const picked = await vscode.window.showErrorMessage(
-        `AI QA: ${message}`,
+        `QAgentic: ${message}`,
         ...(unreachable ? ['Start the control plane', 'Show log'] : []),
       );
       if (picked === 'Start the control plane') {
@@ -231,7 +231,7 @@ async function openChat(_context: vscode.ExtensionContext): Promise<ChatViewProv
 
 async function promptAndRun(context: vscode.ExtensionContext, mode: RunMode): Promise<void> {
   const instruction = await vscode.window.showInputBox({
-    title: `AI QA — ${modeLabel(mode)}`,
+    title: `QAgentic — ${modeLabel(mode)}`,
     prompt: 'What should be automated?',
     placeHolder: 'Automate the Resident Registration functionality',
     ignoreFocusOut: true,
@@ -251,7 +251,7 @@ async function quickRun(context: vscode.ExtensionContext, mode: RunMode, instruc
 
 async function automateFromJira(context: vscode.ExtensionContext): Promise<void> {
   const issue = await vscode.window.showInputBox({
-    title: 'AI QA — automate from Jira',
+    title: 'QAgentic — automate from Jira',
     prompt: 'Jira issue key',
     placeHolder: 'PROJ-1234',
     ignoreFocusOut: true,
@@ -270,7 +270,7 @@ async function automateFromJira(context: vscode.ExtensionContext): Promise<void>
 async function registerProject(): Promise<string | undefined> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
-    void vscode.window.showWarningMessage('AI QA: open a QA automation repository first.');
+    void vscode.window.showWarningMessage('QAgentic: open a QA automation repository first.');
     return undefined;
   }
 
@@ -281,13 +281,13 @@ async function registerProject(): Promise<string | undefined> {
   );
   if (match) {
     await config().update('projectId', match.id, vscode.ConfigurationTarget.Workspace);
-    void vscode.window.showInformationMessage(`AI QA: bound this workspace to the existing project "${match.name}".`);
+    void vscode.window.showInformationMessage(`QAgentic: bound this workspace to the existing project "${match.name}".`);
     refreshAll();
     return match.id;
   }
 
   const name = await vscode.window.showInputBox({
-    title: 'AI QA — register project',
+    title: 'QAgentic — register project',
     prompt: 'Project name',
     value: folder.name,
     ignoreFocusOut: true,
@@ -296,13 +296,13 @@ async function registerProject(): Promise<string | undefined> {
     return undefined;
   }
   const baseUrl = await vscode.window.showInputBox({
-    title: 'AI QA — application under test',
+    title: 'QAgentic — application under test',
     prompt: 'URL of the running application (enables live locator discovery). Leave blank to skip.',
     placeHolder: 'http://localhost:3000',
     ignoreFocusOut: true,
   });
   const apiBaseUrl = await vscode.window.showInputBox({
-    title: 'AI QA — API base URL (optional)',
+    title: 'QAgentic — API base URL (optional)',
     prompt: 'Base URL of the application API, for API-level checks.',
     placeHolder: 'http://localhost:3000/api',
     ignoreFocusOut: true,
@@ -317,7 +317,7 @@ async function registerProject(): Promise<string | undefined> {
   await config().update('projectId', project.id, vscode.ConfigurationTarget.Workspace);
 
   const indexNow = await vscode.window.showInformationMessage(
-    `AI QA: registered "${project.name}". Index the repository now so generated tests match your conventions?`,
+    `QAgentic: registered "${project.name}". Index the repository now so generated tests match your conventions?`,
     'Index now',
     'Later',
   );
@@ -334,7 +334,7 @@ async function indexRepository(): Promise<void> {
     return;
   }
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'AI QA: indexing repository…', cancellable: false },
+    { location: vscode.ProgressLocation.Notification, title: 'QAgentic: indexing repository…', cancellable: false },
     async () => {
       const result = await api.indexProject(id);
       output.info(`indexed ${result.files} files, ${result.symbols} symbols, ${result.chunks} chunks`);
@@ -345,7 +345,7 @@ async function indexRepository(): Promise<void> {
       ]
         .filter(Boolean)
         .join(' — ');
-      const picked = await vscode.window.showInformationMessage(`AI QA: ${detail}`, 'Show conventions');
+      const picked = await vscode.window.showInformationMessage(`QAgentic: ${detail}`, 'Show conventions');
       if (picked) {
         const document = await vscode.workspace.openTextDocument({
           content: String(result.conventions_summary ?? ''),
@@ -361,12 +361,12 @@ async function indexRepository(): Promise<void> {
 async function lintStandards(): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const collection = vscode.languages.createDiagnosticCollection('aiqa-standards');
   const report = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'AI QA: checking QA standards…' },
+    { location: vscode.ProgressLocation.Notification, title: 'QAgentic: checking QA standards…' },
     () => api.lintProject(id),
   );
 
@@ -381,7 +381,7 @@ async function lintStandards(): Promise<void> {
         ? vscode.DiagnosticSeverity.Error
         : vscode.DiagnosticSeverity.Warning,
     );
-    diagnostic.source = 'AI QA standards';
+    diagnostic.source = 'QAgentic standards';
     diagnostic.code = violation.rule_id;
     const list = byFile.get(violation.file_path) ?? [];
     list.push(diagnostic);
@@ -394,7 +394,7 @@ async function lintStandards(): Promise<void> {
   }
 
   const message =
-    `AI QA standards: ${report.errors} error(s), ${report.warnings} warning(s) ` +
+    `QAgentic standards: ${report.errors} error(s), ${report.warnings} warning(s) ` +
     `across ${report.files_checked} file(s) against ${report.rules_applied} rule(s).`;
   if (report.errors > 0) {
     void vscode.window.showWarningMessage(message, 'Open Problems').then((picked) => {
@@ -410,7 +410,7 @@ async function lintStandards(): Promise<void> {
 async function showApprovals(): Promise<void> {
   const approvals = await api.listApprovals();
   if (approvals.length === 0) {
-    void vscode.window.showInformationMessage('AI QA: nothing is waiting for review.');
+    void vscode.window.showInformationMessage('QAgentic: nothing is waiting for review.');
     return;
   }
   const picked = await vscode.window.showQuickPick(
@@ -430,7 +430,7 @@ async function showApprovals(): Promise<void> {
 async function reviewDiff(item?: ApprovalItem): Promise<void> {
   const approval = item?.approval ?? approvalsProvider.pending[0];
   if (!approval) {
-    void vscode.window.showInformationMessage('AI QA: nothing is waiting for review.');
+    void vscode.window.showInformationMessage('QAgentic: nothing is waiting for review.');
     return;
   }
   await reviewApproval(approval);
@@ -451,7 +451,7 @@ async function reviewApproval(approval: Approval): Promise<void> {
   }
   if (choice === 'Approve') {
     await api.respondApproval(approval.id, true, 'approved in VS Code');
-    void vscode.window.showInformationMessage(`AI QA: approved — the run is continuing.`);
+    void vscode.window.showInformationMessage(`QAgentic: approved — the run is continuing.`);
   } else {
     const comment = await vscode.window.showInputBox({
       title: 'Reason for rejection',
@@ -459,7 +459,7 @@ async function reviewApproval(approval: Approval): Promise<void> {
       ignoreFocusOut: true,
     });
     await api.respondApproval(approval.id, false, comment ?? '');
-    void vscode.window.showInformationMessage('AI QA: rejected — the run was stopped.');
+    void vscode.window.showInformationMessage('QAgentic: rejected — the run was stopped.');
   }
   refreshAll();
 }
@@ -475,7 +475,7 @@ async function respond(item: ApprovalItem | undefined, approved: boolean): Promi
       (await vscode.window.showInputBox({ title: 'Reason for rejection', ignoreFocusOut: true })) ?? '';
   }
   await api.respondApproval(approval.id, approved, comment);
-  void vscode.window.showInformationMessage(`AI QA: ${approved ? 'approved' : 'rejected'} ${approval.kind}.`);
+  void vscode.window.showInformationMessage(`QAgentic: ${approved ? 'approved' : 'rejected'} ${approval.kind}.`);
   refreshAll();
 }
 
@@ -597,7 +597,7 @@ async function exploreApplication(context: vscode.ExtensionContext): Promise<voi
 
 async function generateArtifact(context: vscode.ExtensionContext, artifact: string): Promise<void> {
   const feature = await vscode.window.showInputBox({
-    title: `AI QA - generate ${artifact}`,
+    title: `QAgentic - generate ${artifact}`,
     prompt: `Which feature or page should the ${artifact} cover?`,
     ignoreFocusOut: true,
   });
@@ -612,7 +612,7 @@ async function analyzeFailure(): Promise<void> {
   const runs = await api.listRuns(projectId() || undefined, 20);
   const failing = runs.filter((r) => r.tests_failed > 0);
   if (!failing.length) {
-    void vscode.window.showInformationMessage('AI QA: no failing runs to analyse.');
+    void vscode.window.showInformationMessage('QAgentic: no failing runs to analyse.');
     return;
   }
   const picked = await vscode.window.showQuickPick(
@@ -647,7 +647,7 @@ async function showCost(): Promise<void> {
   const unit = cost.unit_economics ?? {};
 
   await openMarkdown([
-    '# AI QA - cost report (30 days)',
+    '# QAgentic - cost report (30 days)',
     '',
     '## Totals',
     '',
@@ -734,7 +734,7 @@ async function runInstruction(
 async function showCoverage(): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const report = await api.projectCoverage(id);
@@ -744,7 +744,7 @@ async function showCoverage(): Promise<void> {
   const gaps = (report.gaps ?? []) as Record<string, any>[];
 
   const lines: string[] = [
-    '# AI QA - coverage gaps',
+    '# QAgentic - coverage gaps',
     '',
     String(report.summary ?? ''),
     '',
@@ -779,20 +779,20 @@ async function showCoverage(): Promise<void> {
 async function showSuiteHealth(): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const report = await api.suiteHealth(id);
   const tests = (report.tests ?? []) as Record<string, any>[];
   if (!tests.length) {
     void vscode.window.showInformationMessage(
-      'AI QA: no test has been executed yet, so there is nothing to judge.',
+      'QAgentic: no test has been executed yet, so there is nothing to judge.',
     );
     return;
   }
 
   const lines: string[] = [
-    `# AI QA - suite health (${report.health_score}%)`,
+    `# QAgentic - suite health (${report.health_score}%)`,
     '',
     String(report.summary ?? ''),
     '',
@@ -824,7 +824,7 @@ async function showSuiteHealth(): Promise<void> {
   );
   if (picked === 'Quarantine them') {
     const result = await api.quarantine(id, { apply: true });
-    void vscode.window.showInformationMessage(`AI QA: ${result.summary}`);
+    void vscode.window.showInformationMessage(`QAgentic: ${result.summary}`);
     refreshAll();
   }
 }
@@ -832,17 +832,17 @@ async function showSuiteHealth(): Promise<void> {
 async function exploratoryTest(context: vscode.ExtensionContext): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const report = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'AI QA: probing the application' },
+    { location: vscode.ProgressLocation.Notification, title: 'QAgentic: probing the application' },
     () => api.exploratory(id),
   );
   const findings = (report.findings ?? []) as Record<string, any>[];
 
   const lines: string[] = [
-    '# AI QA - exploratory pass',
+    '# QAgentic - exploratory pass',
     '',
     String(report.summary ?? ''),
     '',
@@ -892,11 +892,11 @@ async function exploratoryTest(context: vscode.ExtensionContext): Promise<void> 
 async function batchFromEpic(): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const epic = await vscode.window.showInputBox({
-    title: 'AI QA - automate a whole epic',
+    title: 'QAgentic - automate a whole epic',
     prompt: 'Jira epic key',
     placeHolder: 'QA-100',
     ignoreFocusOut: true,
@@ -908,18 +908,18 @@ async function batchFromEpic(): Promise<void> {
   // A batch is the most expensive thing the platform can do, so the extension
   // shows the queue and its price and then hands off to the terminal, where the
   // engineer can watch it and stop it.
-  const terminal = vscode.window.createTerminal({ name: 'AI QA batch' });
+  const terminal = vscode.window.createTerminal({ name: 'QAgentic batch' });
   terminal.show();
   terminal.sendText(`aiqa batch ${id} --epic ${epic.trim().toUpperCase()}`);
   void vscode.window.showInformationMessage(
-    'AI QA: the batch will show you the queue and its estimated cost before it starts anything.',
+    'QAgentic: the batch will show you the queue and its estimated cost before it starts anything.',
   );
 }
 
 async function showKnowledge(): Promise<void> {
   const id = projectId();
   if (!id) {
-    void vscode.window.showWarningMessage('AI QA: register this workspace as a project first.');
+    void vscode.window.showWarningMessage('QAgentic: register this workspace as a project first.');
     return;
   }
   const knowledge = await api.projectKnowledge(id);
@@ -927,7 +927,7 @@ async function showKnowledge(): Promise<void> {
   const app = knowledge.application_map;
 
   const lines: string[] = [
-    `# AI QA - what the platform knows about ${knowledge.project}`,
+    `# QAgentic - what the platform knows about ${knowledge.project}`,
     '',
     'This is the knowledge that makes later runs cheap. Nothing here is re-derived',
     'unless it has genuinely changed.',
@@ -942,7 +942,7 @@ async function showKnowledge(): Promise<void> {
       `- Indexed at commit: \`${repo.git_commit}\``,
     );
   } else {
-    lines.push('_Not indexed yet - run **AI QA: Index Repository**._');
+    lines.push('_Not indexed yet - run **QAgentic: Index Repository**._');
   }
 
   lines.push('', '## Application map', '');
@@ -959,7 +959,7 @@ async function showKnowledge(): Promise<void> {
       ...((knowledge.components ?? []) as string[]).map((c) => `- ${c}`),
     );
   } else {
-    lines.push('_Not explored yet - run **AI QA: Explore Application**._');
+    lines.push('_Not explored yet - run **QAgentic: Explore Application**._');
   }
 
   lines.push(
@@ -981,7 +981,7 @@ async function showKnowledge(): Promise<void> {
 async function initStandards(): Promise<void> {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) {
-    void vscode.window.showWarningMessage('AI QA: open a repository first.');
+    void vscode.window.showWarningMessage('QAgentic: open a repository first.');
     return;
   }
   const confirmed = await vscode.window.showInformationMessage(
@@ -996,7 +996,7 @@ async function initStandards(): Promise<void> {
   if (confirmed !== 'Create') {
     return;
   }
-  const terminal = vscode.window.createTerminal('AI QA');
+  const terminal = vscode.window.createTerminal('QAgentic');
   terminal.show();
   terminal.sendText('python -m services.api_gateway.cli standards init');
 }
@@ -1004,7 +1004,7 @@ async function initStandards(): Promise<void> {
 async function showPipeline(): Promise<void> {
   const [graph, permissions] = await Promise.all([api.pipeline(), api.agentPermissions()]);
   await openMarkdown([
-    '# AI QA - agent pipeline',
+    '# QAgentic - agent pipeline',
     '',
     `Backend: \`${graph.backend}\` (LangGraph available: ${graph.langgraph_available})`,
     '',
@@ -1028,7 +1028,7 @@ async function showPipeline(): Promise<void> {
 async function resetApiKey(): Promise<void> {
   await api.clearApiKey();
   const picked = await vscode.window.showInformationMessage(
-    'AI QA: the stored API key was cleared. Enter the one from `aiqa init` — not your OpenRouter key.',
+    'QAgentic: the stored API key was cleared. Enter the one from `aiqa init` — not your OpenRouter key.',
     'Enter it now',
   );
   if (picked === 'Enter it now') {
@@ -1036,7 +1036,7 @@ async function resetApiKey(): Promise<void> {
     if (key) {
       const check = await api.verifyCredentials();
       void vscode.window.showInformationMessage(
-        check.ok ? 'AI QA: the key works.' : `AI QA: still refused — ${check.detail}`,
+        check.ok ? 'QAgentic: the key works.' : `QAgentic: still refused — ${check.detail}`,
       );
       refreshAll();
     }
@@ -1056,7 +1056,7 @@ async function doctor(): Promise<void> {
 
     const document = await vscode.workspace.openTextDocument({
       content: [
-        '# AI QA Engineer — connection check',
+        '# QAgentic — connection check',
         '',
         `Control plane: ${api.baseUrl}`,
         // `/api/health` is unauthenticated and answers 200 to anything, so a
@@ -1079,14 +1079,14 @@ async function doctor(): Promise<void> {
         `Today: $${health.cost.spent_today_usd ?? 0} of $${health.cost.daily_limit_usd ?? 0}`,
         `Month: $${health.cost.spent_month_usd ?? 0} of $${health.cost.monthly_limit_usd ?? 0}`,
         '',
-        `Workspace project id: ${projectId() || '(not bound — run "AI QA: Register This Workspace as a Project")'}`,
+        `Workspace project id: ${projectId() || '(not bound — run "QAgentic: Register This Workspace as a Project")'}`,
       ].join('\n'),
       language: 'markdown',
     });
     await vscode.window.showTextDocument(document, { preview: true });
   } catch (err) {
     void vscode.window.showErrorMessage(
-      `AI QA: cannot reach ${api.baseUrl}. Start the control plane with \`aiqa serve\`. (${String((err as Error).message)})`,
+      `QAgentic: cannot reach ${api.baseUrl}. Start the control plane with \`aiqa serve\`. (${String((err as Error).message)})`,
     );
   }
 }
@@ -1097,7 +1097,7 @@ async function doctor(): Promise<void> {
 // =========================================================================== //
 async function ensureServer(): Promise<boolean> {
   const started = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Window, title: 'AI QA: connecting to the control plane' },
+    { location: vscode.ProgressLocation.Window, title: 'QAgentic: connecting to the control plane' },
     () => server.ensure(),
   );
   if (started) {
@@ -1112,7 +1112,7 @@ async function ensureServer(): Promise<boolean> {
   // to serve from and nothing says so. Ask once, remember for every window.
   if (!server.knownPlatformRoot) {
     const answer = await vscode.window.showWarningMessage(
-      'AI QA cannot find the platform checkout, so it cannot start the control plane. ' +
+      'QAgentic cannot find the platform checkout, so it cannot start the control plane. ' +
         'Point it at the folder once and every window will use it.',
       'Locate it…',
       'Show log',
@@ -1128,7 +1128,7 @@ async function ensureServer(): Promise<boolean> {
 
   // Offer the two things that actually help, rather than a bare error.
   const picked = await vscode.window.showWarningMessage(
-    `AI QA cannot reach the control plane at ${api.baseUrl}.${server.error ? ` ${server.error}` : ''}`,
+    `QAgentic cannot reach the control plane at ${api.baseUrl}.${server.error ? ` ${server.error}` : ''}`,
     'Start it',
     'Show log',
   );
@@ -1148,7 +1148,7 @@ async function locatePlatform(): Promise<boolean> {
     canSelectFiles: false,
     canSelectMany: false,
     openLabel: 'Use this folder',
-    title: 'Select your AI QA Engineer checkout',
+    title: 'Select your QAgentic checkout',
   });
   const folder = picked?.[0]?.fsPath;
   if (!folder) {
@@ -1156,7 +1156,7 @@ async function locatePlatform(): Promise<boolean> {
   }
   if (!server.rememberPlatformRoot(folder)) {
     void vscode.window.showErrorMessage(
-      `${folder} is not an AI QA Engineer checkout — it has no services/api_gateway/cli.py.`,
+      `${folder} is not a QAgentic checkout — it has no services/api_gateway/cli.py.`,
     );
     return false;
   }
@@ -1166,16 +1166,16 @@ async function locatePlatform(): Promise<boolean> {
 
 async function startServer(): Promise<boolean> {
   const ok = await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'AI QA: starting the control plane' },
+    { location: vscode.ProgressLocation.Notification, title: 'QAgentic: starting the control plane' },
     () => server.start(),
   );
   if (ok) {
-    void vscode.window.showInformationMessage(`AI QA control plane running at ${api.baseUrl}`);
+    void vscode.window.showInformationMessage(`QAgentic control plane running at ${api.baseUrl}`);
     await connectBanner();
     refreshAll();
   } else {
     const picked = await vscode.window.showErrorMessage(
-      `AI QA could not start the control plane. ${server.error}`,
+      `QAgentic could not start the control plane. ${server.error}`,
       'Show log',
     );
     if (picked) {
@@ -1193,13 +1193,13 @@ function stopServer(): void {
     return;
   }
   server.stop();
-  void vscode.window.showInformationMessage('AI QA control plane stopped.');
+  void vscode.window.showInformationMessage('QAgentic control plane stopped.');
   void connectBanner();
 }
 
 async function restartServer(): Promise<void> {
   await vscode.window.withProgress(
-    { location: vscode.ProgressLocation.Notification, title: 'AI QA: restarting the control plane' },
+    { location: vscode.ProgressLocation.Notification, title: 'QAgentic: restarting the control plane' },
     () => server.restart(),
   );
   await connectBanner();
@@ -1215,16 +1215,16 @@ async function connectBanner(): Promise<void> {
     if (offline) {
       output.warn('no LLM provider reachable — running in deterministic offline mode');
     }
-    statusBar.text = `$(beaker) AI QA${offline ? ' (offline)' : ''}`;
+    statusBar.text = `$(beaker) QAgentic${offline ? ' (offline)' : ''}`;
   } catch {
-    statusBar.text = '$(beaker) AI QA $(debug-disconnect)';
+    statusBar.text = '$(beaker) QAgentic $(debug-disconnect)';
     statusBar.tooltip = `Cannot reach ${api.baseUrl} — run \`aiqa serve\``;
   }
 }
 
 async function updateStatusBar(): Promise<void> {
   if (!config().get<boolean>('showCostInStatusBar', true)) {
-    statusBar.text = '$(beaker) AI QA';
+    statusBar.text = '$(beaker) QAgentic';
     return;
   }
   try {
@@ -1232,16 +1232,16 @@ async function updateStatusBar(): Promise<void> {
     const active = runs.find((r) => r.status === 'running' || r.status === 'waiting_approval');
     if (active) {
       const icon = active.status === 'running' ? '$(sync~spin)' : '$(person)';
-      statusBar.text = `${icon} AI QA ${active.current_agent || active.status} · $${active.total_cost_usd.toFixed(4)}`;
+      statusBar.text = `${icon} QAgentic ${active.current_agent || active.status} · $${active.total_cost_usd.toFixed(4)}`;
       statusBar.tooltip = `${active.instruction}\n${active.total_tokens.toLocaleString()} tokens`;
       return;
     }
     const metrics = await api.metrics(1);
     const today = metrics.cost?.governance?.spent_today_usd ?? 0;
-    statusBar.text = `$(beaker) AI QA · $${Number(today).toFixed(4)} today`;
-    statusBar.tooltip = 'AI QA Engineer — click to open chat';
+    statusBar.text = `$(beaker) QAgentic · $${Number(today).toFixed(4)} today`;
+    statusBar.tooltip = 'QAgentic — click to open chat';
   } catch {
-    statusBar.text = '$(beaker) AI QA $(debug-disconnect)';
+    statusBar.text = '$(beaker) QAgentic $(debug-disconnect)';
   }
 }
 

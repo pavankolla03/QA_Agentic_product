@@ -1,4 +1,4 @@
-"""Domain models for the AI QA platform.
+"""Domain models for the QAgentic platform.
 
 These Pydantic models are the contract between agents, tools, the API gateway
 and the VS Code extension. Nothing crosses a boundary as a loose ``dict``.

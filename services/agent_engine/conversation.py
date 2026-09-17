@@ -196,7 +196,7 @@ class ConversationService:
     def _project(self, _: Resolution) -> Answer:
         if not self.project_id:
             return Answer(
-                "No project is bound to this workspace yet. Run \"AI QA: Set Up\" and I will "
+                "No project is bound to this workspace yet. Run \"QAgentic: Set Up\" and I will "
                 "walk through it."
             )
         with session_scope() as session:

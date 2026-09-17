@@ -306,7 +306,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         if active:
             headers["Authorization"] = f"Bearer {active}"
         headers["HTTP-Referer"] = "https://github.com/aiqa-engineer"
-        headers["X-Title"] = "AI QA Engineer"
+        headers["X-Title"] = "QAgentic"
         return headers
 
     @property

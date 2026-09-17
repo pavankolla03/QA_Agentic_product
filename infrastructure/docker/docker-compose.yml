@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# AI QA Engineer — local / small-team deployment.
+# QAgentic — local / small-team deployment.
 #
 #   docker compose up -d                     # control plane + Postgres + Redis
 #   docker compose --profile local-llm up -d # also run Ollama (no API keys needed)

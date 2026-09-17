@@ -1,4 +1,4 @@
-# AI QA Engineer — Loop Engineering Progress Ledger
+# QAgentic — Loop Engineering Progress Ledger
 
 > **Single source of truth for resuming work.** Read this first, find the first phase that is not
 > `DONE`, continue from its note. Protocol per phase: BUILD → TEST → VERIFY → update this file.

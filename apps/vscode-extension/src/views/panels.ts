@@ -72,7 +72,7 @@ const projectId = () => vscode.workspace.getConfiguration('aiqa').get<string>('p
 export class AssistantProvider extends BaseProvider {
   protected async load(): Promise<vscode.TreeItem[]> {
     const items = [
-      action('Ask the AI QA engineer…', 'aiqa.openChat', 'comment-discussion'),
+      action('Ask the QAgentic…', 'aiqa.openChat', 'comment-discussion'),
       action('Generate automation', 'aiqa.generateAutomation', 'sparkle'),
       action('Explore the application', 'aiqa.exploreApplication', 'browser'),
       action('Run existing tests', 'aiqa.runTests', 'play'),

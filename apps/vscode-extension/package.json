@@ -1,7 +1,7 @@
 {
-  "name": "ai-qa-engineer",
-  "displayName": "AI QA Engineer",
-  "description": "Autonomous AI QA engineer: describe a feature, review the generated Playwright + BDD automation, approve, run, self-heal.",
+  "name": "qagentic",
+  "displayName": "QAgentic",
+  "description": "Autonomous QA. Describe a feature, or just give it a URL: it explores the application, writes Playwright + BDD automation, runs it, and repairs what breaks.",
   "version": "0.1.0",
   "publisher": "aiqa",
   "license": "SEE LICENSE IN LICENSE",
@@ -31,12 +31,12 @@
       "activitybar": [
         {
           "id": "aiqa",
-          "title": "AI QA Chat",
+          "title": "QAgentic Chat",
           "icon": "media/icon.svg"
         },
         {
           "id": "aiqaWorkbench",
-          "title": "AI QA Engineer",
+          "title": "QAgentic",
           "icon": "media/workbench.svg"
         }
       ]
@@ -48,7 +48,7 @@
           "name": "Chat",
           "type": "webview",
           "visibility": "visible",
-          "contextualTitle": "AI QA Chat",
+          "contextualTitle": "QAgentic Chat",
           "icon": "media/icon.svg"
         }
       ],
@@ -58,77 +58,77 @@
           "name": "Approvals",
           "icon": "$(check)",
           "visibility": "visible",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.runs",
           "name": "Test Runs",
           "icon": "$(history)",
           "visibility": "visible",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.failures",
           "name": "Failures",
           "icon": "$(error)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.healing",
           "name": "Self-Healing",
           "icon": "$(wrench)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.activity",
           "name": "Agent Activity",
           "icon": "$(pulse)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.knowledge",
           "name": "Knowledge",
           "icon": "$(database)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.standards",
           "name": "Standards",
           "icon": "$(law)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.costs",
           "name": "Costs",
           "icon": "$(credit-card)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.agents",
           "name": "Agents",
           "icon": "$(organization)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.reports",
           "name": "Reports",
           "icon": "$(file-text)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         },
         {
           "id": "aiqa.configuration",
           "name": "Configuration",
           "icon": "$(gear)",
           "visibility": "collapsed",
-          "contextualTitle": "AI QA Engineer"
+          "contextualTitle": "QAgentic"
         }
       ]
     },
@@ -136,7 +136,7 @@
       {
         "command": "aiqa.setup",
         "title": "Set Up",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.openChat",
@@ -145,195 +145,195 @@
       },
       {
         "command": "aiqa.automate",
-        "title": "AI QA: Automate a Feature..."
+        "title": "QAgentic: Automate a Feature..."
       },
       {
         "command": "aiqa.planOnly",
-        "title": "AI QA: Design Test Plan Only..."
+        "title": "QAgentic: Design Test Plan Only..."
       },
       {
         "command": "aiqa.generateOnly",
-        "title": "AI QA: Generate Tests (no execution)..."
+        "title": "QAgentic: Generate Tests (no execution)..."
       },
       {
         "command": "aiqa.runTests",
-        "title": "AI QA: Run Existing Tests"
+        "title": "QAgentic: Run Existing Tests"
       },
       {
         "command": "aiqa.healFailures",
-        "title": "AI QA: Diagnose and Self-Heal Failures"
+        "title": "QAgentic: Diagnose and Self-Heal Failures"
       },
       {
         "command": "aiqa.automateFromJira",
-        "title": "AI QA: Automate from a Jira Issue..."
+        "title": "QAgentic: Automate from a Jira Issue..."
       },
       {
         "command": "aiqa.registerProject",
-        "title": "AI QA: Register This Workspace as a Project"
+        "title": "QAgentic: Register This Workspace as a Project"
       },
       {
         "command": "aiqa.indexRepository",
-        "title": "AI QA: Index Repository (learn conventions)"
+        "title": "QAgentic: Index Repository (learn conventions)"
       },
       {
         "command": "aiqa.lintStandards",
-        "title": "AI QA: Check Suite Against QA Standards"
+        "title": "QAgentic: Check Suite Against QA Standards"
       },
       {
         "command": "aiqa.showApprovals",
-        "title": "AI QA: Show Pending Approvals"
+        "title": "QAgentic: Show Pending Approvals"
       },
       {
         "command": "aiqa.reviewDiff",
-        "title": "AI QA: Review Proposed Changes",
+        "title": "QAgentic: Review Proposed Changes",
         "icon": "$(git-compare)"
       },
       {
         "command": "aiqa.approve",
-        "title": "AI QA: Approve",
+        "title": "QAgentic: Approve",
         "icon": "$(check)"
       },
       {
         "command": "aiqa.reject",
-        "title": "AI QA: Reject",
+        "title": "QAgentic: Reject",
         "icon": "$(x)"
       },
       {
         "command": "aiqa.openRun",
-        "title": "AI QA: Open Run"
+        "title": "QAgentic: Open Run"
       },
       {
         "command": "aiqa.cancelRun",
-        "title": "AI QA: Cancel Run",
+        "title": "QAgentic: Cancel Run",
         "icon": "$(stop-circle)"
       },
       {
         "command": "aiqa.showReport",
-        "title": "AI QA: Show Run Report"
+        "title": "QAgentic: Show Run Report"
       },
       {
         "command": "aiqa.showTrace",
-        "title": "AI QA: Show Agent Trace"
+        "title": "QAgentic: Show Agent Trace"
       },
       {
         "command": "aiqa.refresh",
-        "title": "AI QA: Refresh",
+        "title": "QAgentic: Refresh",
         "icon": "$(refresh)"
       },
       {
         "command": "aiqa.openDashboard",
-        "title": "AI QA: Open Control Plane Dashboard"
+        "title": "QAgentic: Open Control Plane Dashboard"
       },
       {
         "command": "aiqa.doctor",
-        "title": "AI QA: Check Connection and Providers"
+        "title": "QAgentic: Check Connection and Providers"
       },
       {
         "command": "aiqa.generateAutomation",
-        "title": "AI QA: Generate Automation"
+        "title": "QAgentic: Generate Automation"
       },
       {
         "command": "aiqa.exploreApplication",
-        "title": "AI QA: Explore Application"
+        "title": "QAgentic: Explore Application"
       },
       {
         "command": "aiqa.generateGherkin",
-        "title": "AI QA: Generate Gherkin"
+        "title": "QAgentic: Generate Gherkin"
       },
       {
         "command": "aiqa.generatePageObject",
-        "title": "AI QA: Generate Page Object"
+        "title": "QAgentic: Generate Page Object"
       },
       {
         "command": "aiqa.generateSteps",
-        "title": "AI QA: Generate Steps"
+        "title": "QAgentic: Generate Steps"
       },
       {
         "command": "aiqa.analyzeFailure",
-        "title": "AI QA: Analyze Failure"
+        "title": "QAgentic: Analyze Failure"
       },
       {
         "command": "aiqa.selfHeal",
-        "title": "AI QA: Self Heal"
+        "title": "QAgentic: Self Heal"
       },
       {
         "command": "aiqa.validateStandards",
-        "title": "AI QA: Validate Standards"
+        "title": "QAgentic: Validate Standards"
       },
       {
         "command": "aiqa.showCost",
-        "title": "AI QA: Show Cost"
+        "title": "QAgentic: Show Cost"
       },
       {
         "command": "aiqa.generateReport",
-        "title": "AI QA: Generate Report"
+        "title": "QAgentic: Generate Report"
       },
       {
         "command": "aiqa.showKnowledge",
-        "title": "AI QA: Show Project Knowledge"
+        "title": "QAgentic: Show Project Knowledge"
       },
       {
         "command": "aiqa.initStandards",
-        "title": "AI QA: Initialise .aiqa Standards"
+        "title": "QAgentic: Initialise .aiqa Standards"
       },
       {
         "command": "aiqa.showPipeline",
-        "title": "AI QA: Show Agent Pipeline"
+        "title": "QAgentic: Show Agent Pipeline"
       },
       {
         "command": "aiqa.startServer",
         "title": "Start Control Plane",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.stopServer",
         "title": "Stop Control Plane",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.restartServer",
         "title": "Restart Control Plane",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.showServerLog",
         "title": "Show Control Plane Log",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.showCoverage",
         "title": "Show Coverage Gaps",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.automateInstruction",
         "title": "Automate This",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.showSuiteHealth",
         "title": "Show Suite Health",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.exploratoryTest",
         "title": "Run Exploratory Pass",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.batchFromEpic",
         "title": "Automate a Jira Epic",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.resetApiKey",
         "title": "Reset API Key",
-        "category": "AI QA"
+        "category": "QAgentic"
       },
       {
         "command": "aiqa.locatePlatform",
         "title": "Locate Platform Folder",
-        "category": "AI QA"
+        "category": "QAgentic"
       }
     ],
     "menus": {
@@ -398,12 +398,12 @@
       ]
     },
     "configuration": {
-      "title": "AI QA Engineer",
+      "title": "QAgentic",
       "properties": {
         "aiqa.serverUrl": {
           "type": "string",
           "default": "http://127.0.0.1:8080",
-          "description": "URL of the AI QA control plane."
+          "description": "URL of the QAgentic control plane."
         },
         "aiqa.apiKey": {
           "type": "string",
@@ -465,7 +465,7 @@
         "aiqa.autoStartServer": {
           "type": "boolean",
           "default": true,
-          "description": "Start the AI QA control plane automatically when the extension activates. An already-running server is always reused, never replaced."
+          "description": "Start the QAgentic control plane automatically when the extension activates. An already-running server is always reused, never replaced."
         },
         "aiqa.pythonPath": {
           "type": "string",
@@ -475,12 +475,12 @@
         "aiqa.repositoryPath": {
           "type": "string",
           "default": "C:\\Users\\Pavan.Kolla\\Desktop\\QA_AI_Agents",
-          "description": "Path to the AI QA Engineer checkout to start the control plane from. Needed when the open workspace is your test repository rather than the platform itself."
+          "description": "Path to the QAgentic checkout to start the control plane from. Needed when the open workspace is your test repository rather than the platform itself."
         },
         "aiqa.revealChatOnStartup": {
           "type": "boolean",
           "default": true,
-          "description": "Open the AI QA chat when a window starts. Turn this off to keep the sidebar you had."
+          "description": "Open the QAgentic chat when a window starts. Turn this off to keep the sidebar you had."
         }
       }
     },

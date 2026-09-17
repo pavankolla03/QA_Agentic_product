@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CI for the AI QA Engineer platform itself.
+# CI for the QAgentic platform itself.
 # Copy to .github/workflows/ci.yml to enable.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
@@ -83,12 +83,12 @@ jobs:
         working-directory: apps/vscode-extension
         run: |
           npm install -g @vscode/vsce
-          vsce package --no-dependencies --out ai-qa-engineer.vsix
+          vsce package --no-dependencies --out qagentic.vsix
 
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
-          path: apps/vscode-extension/ai-qa-engineer.vsix
+          path: apps/vscode-extension/qagentic.vsix
 
   postgres:
     name: Postgres compatibility

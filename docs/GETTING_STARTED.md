@@ -95,7 +95,7 @@ npm install && npm run compile
 ```
 
 Press F5, then Ctrl+Alt+Q in the Extension Development Host. Run
-**AI QA: Register This Workspace as a Project**, and paste the API key when prompted (it goes into
+**QAgentic: Register This Workspace as a Project**, and paste the API key when prompted (it goes into
 the OS keychain, not settings.json).
 
 ## 8. Dashboard
@@ -108,7 +108,7 @@ the OS keychain, not settings.json).
 
 | Symptom | Cause and fix |
 |---|---|
-| `Cannot reach the AI QA control plane` | The server is not running. `python -m services.api_gateway.cli serve` |
+| `Cannot reach the QAgentic control plane` | The server is not running. `python -m services.api_gateway.cli serve` |
 | Everything routes to `mock` | No provider reachable. Start Ollama or set a provider key, then restart |
 | `Playwright is not installed in this project` | In your QA repo: `npm install && npx playwright install` |
 | Generated locators are all `TODO(aiqa)` | The app was unreachable. Set the project's `base_url` and make sure it is running |

@@ -1,4 +1,4 @@
-# AI QA Engineer
+# QAgentic
 
 **A cost-optimized autonomous QA engineering platform.** You describe a feature;
 the platform reads your repository, explores the running application, designs a
@@ -22,7 +22,7 @@ platform already knows.**
                                │ REST + WebSocket
                                ▼
               ┌────────────────────────────────┐
-              │      AI QA CONTROL PLANE       │
+              │     QAgentic CONTROL PLANE     │
               │ auth · RBAC · runs · traces    │
               │ tokens · cost · approvals      │
               │ audit · metrics                │

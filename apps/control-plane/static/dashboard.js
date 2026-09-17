@@ -1,4 +1,4 @@
-/* AI QA Engineer — control plane dashboard.
+/* QAgentic — control plane dashboard.
  *
  * Vanilla JS, no build step, no CDN. All DOM is built with createElement and
  * textContent so nothing from the API can inject markup.
