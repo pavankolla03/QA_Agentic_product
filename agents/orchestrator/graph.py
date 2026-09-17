@@ -222,14 +222,45 @@ class Orchestrator:
             current = node.route(ctx)
 
         # Nothing left to do.
-        failed = bool(ctx.execution and ctx.execution.failures)
-        blocked = bool(ctx.metadata.get("execution_blocked"))
-        status = RunStatus.SUCCEEDED
-        if failed or blocked:
-            # A run that correctly reported failing tests did its job; the run
-            # itself only "fails" when the platform could not complete its work.
-            status = RunStatus.SUCCEEDED if ctx.report else RunStatus.FAILED
-        return GraphResult(status=status, visited=visited)
+        return GraphResult(status=terminal_status(ctx), visited=visited)
+
+
+def terminal_status(ctx: AgentContext) -> RunStatus:
+    """How a completed run ended, in one word that can be trusted.
+
+    Three outcomes, and the distinction between the last two is the whole
+    point:
+
+    * **SUCCEEDED** — there is automation here that was verified. Tests that
+      ran and failed still count: reporting a real failure is the job, and a
+      suite that goes red for a genuine product defect has done exactly what it
+      was written to do.
+    * **BLOCKED** — the platform worked and produced nothing it can vouch for.
+      Code that does not compile, steps with no verified action behind them,
+      a suite that never executed. A human has to decide something.
+    * **FAILED** — the platform itself broke, and that is decided by the caller
+      when a critical agent raises.
+
+    This used to read "SUCCEEDED if ctx.report else FAILED", which made writing
+    a report the definition of success. A run whose report was headlined
+    AUTOMATION_BLOCKED, whose generated TypeScript had four compile errors and
+    which executed zero tests, was recorded as `succeeded` — and `status` is
+    what CI gates on and what the dashboard colours green, not the headline.
+    """
+    if ctx.metadata.get("execution_blocked"):
+        return RunStatus.BLOCKED
+    if ctx.metadata.get("automation_blocked"):
+        # Steps that compile but do nothing. The suite would go green while
+        # verifying nothing at all, which is worse than not existing.
+        return RunStatus.BLOCKED
+    if int((ctx.metadata.get("compile_check") or {}).get("errors") or 0):
+        return RunStatus.BLOCKED
+
+    # An execution that produced no test at all is not a pass. This catches the
+    # runner exiting cleanly with an empty report, which no other check sees.
+    if ctx.execution is not None and not ctx.execution.total:
+        return RunStatus.BLOCKED
+    return RunStatus.SUCCEEDED
 
 
 def _input_summary(ctx: AgentContext, node: str) -> str:

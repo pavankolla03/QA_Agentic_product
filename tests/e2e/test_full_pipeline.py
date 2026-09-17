@@ -30,7 +30,11 @@ async def completed_run(engine, project, org_user):
         org_id=org_id,
     )
     result = await engine.run_to_completion(run_id, auto_approve=True)
-    assert result.status == RunStatus.SUCCEEDED, result.error
+    # Nothing in this sandbox can verify automation: no npm, no browser, and no
+    # reachable application. BLOCKED is the honest outcome, and pinning it here is
+    # the point — this assertion read SUCCEEDED for a run that executed zero tests
+    # and generated steps with nothing behind them.
+    assert result.status is RunStatus.BLOCKED, result.error
 
     from services.observability.db import session_scope
     from services.observability.models import RunRow

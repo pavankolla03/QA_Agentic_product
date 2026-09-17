@@ -309,6 +309,14 @@ class ConversationService:
     def _outcome(run: dict) -> str:
         if run["error"]:
             return run["error"][:200]
+        if run["status"] == RunStatus.BLOCKED.value:
+            # "Blocked" on its own invites the reading "it is still going". Say
+            # what was produced and, plainly, that none of it was verified.
+            written = f"{run['files_changed']} file(s) were written" if run["files_changed"] else "Nothing was written"
+            return (
+                f"{written}, and none of it is verified — the run could not compile it, "
+                "bind every step, or execute the suite. Open the report to see which."
+            )
         if run["tests_total"]:
             return f"{run['tests_passed']}/{run['tests_total']} scenarios passed."
         if run["files_changed"]:

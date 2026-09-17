@@ -205,6 +205,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; font-fam
 }
 .dot.running { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
 .dot.succeeded { background: var(--green); }
+/* The platform worked and produced nothing it can vouch for. Amber, alongside
+   waiting_approval, because both mean a person has to decide something - and
+   emphatically not green, which is what this used to be. */
+.dot.blocked { background: var(--amber); }
 .dot.failed, .dot.budget_exceeded { background: var(--red); }
 .dot.waiting_approval { background: var(--amber); }
 .dot.cancelled { background: var(--muted); }

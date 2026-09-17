@@ -516,7 +516,10 @@ async function showReport(runId?: string): Promise<void> {
   let id = runId;
   if (!id) {
     const runs = await api.listRuns(projectId() || undefined, 20);
-    const withReports = runs.filter((r) => r.status === 'succeeded' || r.status === 'failed');
+    // A blocked run is the one whose report you most want to open: it says
+    // exactly which steps have nothing behind them and why.
+    const reported = new Set(['succeeded', 'blocked', 'failed']);
+    const withReports = runs.filter((r) => reported.has(r.status));
     const picked = await vscode.window.showQuickPick(
       withReports.map((r) => ({ label: r.instruction.slice(0, 70), description: r.status, id: r.id })),
       { title: 'Show report for run' },

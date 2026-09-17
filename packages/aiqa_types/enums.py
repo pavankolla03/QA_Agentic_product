@@ -21,6 +21,15 @@ class RunStatus(StrEnum):
     WAITING_APPROVAL = "waiting_approval"
     PAUSED = "paused"
     SUCCEEDED = "succeeded"
+    #: The platform worked, and produced nothing it could verify.
+    #:
+    #: Distinct from FAILED, which means the platform itself broke, and from
+    #: SUCCEEDED, which a run used to reach whenever it managed to write a
+    #: report — including reports whose own headline said the automation was
+    #: blocked and no test had run. "I wrote a document about not finishing" is
+    #: not finishing, and `status` is what CI and the dashboard read, not the
+    #: headline. BLOCKED means a human has to decide something.
+    BLOCKED = "blocked"
     FAILED = "failed"
     CANCELLED = "cancelled"
     BUDGET_EXCEEDED = "budget_exceeded"
@@ -29,10 +38,20 @@ class RunStatus(StrEnum):
     def terminal(self) -> bool:
         return self in {
             RunStatus.SUCCEEDED,
+            RunStatus.BLOCKED,
             RunStatus.FAILED,
             RunStatus.CANCELLED,
             RunStatus.BUDGET_EXCEEDED,
         }
+
+    @property
+    def verified_work(self) -> bool:
+        """Did this run end with automation anybody can rely on?
+
+        The one question a dashboard, a CI gate or a chat reply actually wants
+        answered. Only SUCCEEDED says yes.
+        """
+        return self is RunStatus.SUCCEEDED
 
 
 class RunMode(StrEnum):

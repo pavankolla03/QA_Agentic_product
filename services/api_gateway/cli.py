@@ -426,6 +426,10 @@ def run_start(
                 f"cost: ${row.total_cost_usd:.6f} · {row.total_tokens:,} tokens · "
                 f"{row.llm_calls} LLM call(s) · {row.duration_s:.1f}s"
             )
+    # `blocked` exits non-zero on purpose. It means the run produced automation
+    # nothing has verified - code that does not compile, steps with no action
+    # behind them, a suite that never executed - and a CI job that goes green on
+    # that has learned to ignore this tool.
     raise typer.Exit(0 if result.status.value in ("succeeded", "waiting_approval") else 1)
 
 

@@ -36,6 +36,7 @@ from agents.orchestrator.graph import (
     _after_test_design,
     _input_summary,
     build_default_nodes,
+    terminal_status,
 )
 from packages.agent_protocol import ApprovalRequired
 from packages.aiqa_types.enums import RunMode, RunStatus
@@ -261,12 +262,10 @@ class LangGraphOrchestrator(Orchestrator):
         if final.get("status") == RunStatus.FAILED.value:
             return GraphResult(status=RunStatus.FAILED, error=final.get("error", ""), visited=visited)
 
-        blocked = bool(ctx.metadata.get("execution_blocked"))
-        failed = bool(ctx.execution and ctx.execution.failures)
-        status = RunStatus.SUCCEEDED
-        if (failed or blocked) and not ctx.report:
-            status = RunStatus.FAILED
-        return GraphResult(status=status, visited=visited)
+        # Shared with the built-in graph rather than restated here. The two
+        # orchestrators must reach the same verdict from the same context, and
+        # the only way to guarantee that is for there to be one rule.
+        return GraphResult(status=terminal_status(ctx), visited=visited)
 
     # ------------------------------------------------------------------ #
     def mermaid(self) -> str:
