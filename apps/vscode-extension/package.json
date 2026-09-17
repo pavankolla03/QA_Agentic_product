@@ -1,5 +1,5 @@
 {
-  "name": "qagentic",
+  "name": "ai-qa-engineer",
   "displayName": "QAgentic",
   "description": "Autonomous QA. Describe a feature, or just give it a URL: it explores the application, writes Playwright + BDD automation, runs it, and repairs what breaks.",
   "version": "0.1.0",
@@ -31,12 +31,12 @@
       "activitybar": [
         {
           "id": "aiqa",
-          "title": "QAgentic Chat",
+          "title": "QAgentic",
           "icon": "media/icon.svg"
         },
         {
           "id": "aiqaWorkbench",
-          "title": "QAgentic",
+          "title": "QAgentic Workbench",
           "icon": "media/workbench.svg"
         }
       ]

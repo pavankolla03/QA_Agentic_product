@@ -146,3 +146,34 @@ def test_a_server_the_extension_did_not_start_is_never_killed(sources) -> None:
     assert "this.child" in stop and "if (!child" in stop, (
         "stop() must be a no-op unless this extension owns the process"
     )
+
+
+def test_the_extension_id_is_not_the_product_name(manifest: dict) -> None:
+    """Renaming the product must not orphan everybody's installed extension.
+
+    `publisher.name` is the extension's identity to VS Code, not a label. When
+    the rename to QAgentic changed `name` too, installing the new build left the
+    old one in place: two extensions contributing the same commands, the same
+    keybindings and the same activity-bar containers, with VS Code free to pick
+    either. The visible name is `displayName`, and that is the one that changed.
+
+    This is the same rule the rest of the rename follows — `aiqa` stays as the
+    namespace for the CLI, the environment variables and the .aiqa/ directory.
+    """
+    assert manifest["name"] == "ai-qa-engineer"
+    assert manifest["publisher"] == "aiqa"
+    assert manifest["displayName"] == "QAgentic"
+
+
+def test_the_product_name_is_what_a_user_actually_sees(manifest: dict) -> None:
+    """Every label VS Code renders says QAgentic, whatever the ids say."""
+    containers = manifest["contributes"]["viewsContainers"]["activitybar"]
+    assert [container["title"] for container in containers] == ["QAgentic", "QAgentic Workbench"]
+
+    stale = [
+        command["title"]
+        for command in manifest["contributes"]["commands"]
+        if "AI QA" in command["title"] or "AI QA" in command.get("category", "")
+    ]
+    assert stale == []
+

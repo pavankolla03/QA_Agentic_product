@@ -23,6 +23,19 @@ export interface ChatReply {
   text: string;
   mode: RunMode;
   suggestions: string[];
+  target_url?: string;
+  autopilot?: boolean;
+}
+
+/** What one chat message resolved to. */
+export interface ChatOutcome {
+  kind: 'reply' | 'run';
+  mode: RunMode;
+  suggestions: string[];
+  /** The application the message pointed at, if it named one. */
+  targetUrl: string;
+  /** True when the scope of the run is whatever the crawl finds. */
+  autopilot: boolean;
 }
 
 export interface Project {
@@ -466,7 +479,7 @@ export class ApiClient {
     projectId: string,
     message: string,
     onToken: (text: string) => void,
-  ): Promise<{ kind: 'reply' | 'run'; mode: RunMode; suggestions: string[] }> {
+  ): Promise<ChatOutcome> {
     const key = await this.getApiKey();
     if (!key) {
       throw new ApiError(401, 'No API key configured.');
@@ -481,10 +494,12 @@ export class ApiClient {
       throw new ApiError(response.status, `chat stream failed: ${response.statusText}`);
     }
 
-    let outcome: { kind: 'reply' | 'run'; mode: RunMode; suggestions: string[] } = {
+    let outcome: ChatOutcome = {
       kind: 'reply',
       mode: 'full',
       suggestions: [],
+      targetUrl: '',
+      autopilot: false,
     };
 
     const reader = response.body.getReader();
@@ -521,12 +536,22 @@ export class ApiClient {
             if (event === 'token' && typeof data.text === 'string') {
               onToken(data.text);
             } else if (event === 'run_suggested') {
-              outcome = { kind: 'run', mode: (data.mode as RunMode) ?? 'full', suggestions: [] };
+              outcome = {
+                kind: 'run',
+                mode: (data.mode as RunMode) ?? 'full',
+                suggestions: [],
+                // A URL in the message reaches the crawler as a URL, rather
+                // than as a sentence somebody has to re-read.
+                targetUrl: typeof data.target_url === 'string' ? data.target_url : '',
+                autopilot: data.autopilot === true,
+              };
             } else if (event === 'chat_finished') {
               outcome = {
                 kind: 'reply',
                 mode: 'full',
                 suggestions: Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [],
+                targetUrl: '',
+                autopilot: false,
               };
             }
           }

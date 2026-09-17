@@ -740,6 +740,15 @@
         finishStreaming(message.suggestions || []);
         break;
 
+      // Said before a run starts, when what is about to happen is wider than
+      // what was typed. "Automate everything at this URL" is worth stating
+      // back before several minutes of crawling begin.
+      case 'assistantNotice':
+        clearThinking();
+        els.timeline.appendChild(el('div', 'notice', message.text));
+        scroll();
+        break;
+
       case 'runStarting':
         clearWelcome();
         clearThinking();

@@ -93,31 +93,61 @@ body {
 }
 .example:hover { background: var(--vscode-button-secondaryHoverBackground); }
 
-/* user turn */
+/* ---- the transcript ----
+ *
+ * Read as a session log, not as two people texting. Both sides are flush left
+ * in one column, and what distinguishes them is a marker rather than a bubble
+ * on the opposite side of the panel.
+ *
+ * This is not only taste. A run emits dozens of agent lines between one
+ * question and its answer, and alternating bubbles turn that into a zigzag
+ * nobody can skim. One column with markers stays readable at any length, which
+ * is the whole reason a terminal-shaped transcript is the right shape here.
+ */
 .turn {
-  align-self: flex-end;
-  max-width: 80%;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  padding: 8px 12px;
-  border-radius: var(--radius);
+  align-self: stretch;
+  max-width: 100%;
   white-space: pre-wrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.92em;
+  line-height: 1.5;
+  padding: 6px 0 6px 18px;
+  position: relative;
+  color: var(--vscode-foreground);
 }
 
-/* ---- a plain answer ----
- * Deliberately unlike `.turn`: the user's message is a bubble on the right,
- * the assistant's is flush text on the left, the way every chat that reads
- * well does it. Answers can be several sentences and a bubble that wide stops
- * looking like a bubble.
- */
+/* The prompt marker, as a marker rather than as text: it must not be part of
+ * what a user copies out of the transcript. */
+.turn::before {
+  content: '>';
+  position: absolute;
+  left: 2px;
+  color: var(--vscode-textLink-foreground);
+  font-weight: 600;
+}
+
 .assistant {
   align-self: stretch;
   max-width: 100%;
   line-height: 1.55;
-  padding: 2px 0 6px;
+  padding: 2px 0 8px 18px;
 }
 
 .assistant-line + .assistant-line { margin-top: 10px; }
+
+/* Said before a run starts, when what is about to happen is wider than what
+ * was asked. Quiet enough not to look like an error, present enough to be read
+ * before several minutes of crawling begin. */
+.notice {
+  align-self: stretch;
+  padding: 8px 10px 8px 12px;
+  margin: 2px 0;
+  line-height: 1.5;
+  font-size: 0.92em;
+  border-left: 2px solid var(--vscode-charts-blue);
+  background: color-mix(in srgb, var(--vscode-charts-blue) 8%, transparent);
+  color: var(--vscode-descriptionForeground);
+}
 
 .assistant.thinking {
   color: var(--vscode-descriptionForeground);
@@ -132,15 +162,30 @@ body {
 
 .assistant .suggestions { margin-top: 10px; }
 
-/* agent step */
+/* ---- what an agent is doing ----
+ *
+ * A dot for the stage, its output indented beneath. Ten stages of a run are
+ * scanned far more often than they are read, so these are dense and dim by
+ * default; colour is reserved for the two outcomes worth stopping on.
+ */
 .step {
-  border-left: 2px solid var(--vscode-panel-border);
-  padding: 4px 0 4px 12px;
+  padding: 3px 0 3px 18px;
+  position: relative;
 }
-.step.active { border-left-color: var(--vscode-charts-blue); }
-.step.done { border-left-color: var(--vscode-charts-green); }
-.step.failed { border-left-color: var(--vscode-charts-red); }
-.step.suspended { border-left-color: var(--vscode-charts-yellow); }
+
+.step::before {
+  content: '\25CF';                        /* ● */
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  font-size: 0.75em;
+  line-height: 1.9;
+  color: var(--vscode-descriptionForeground);
+}
+.step.active::before { color: var(--vscode-charts-blue); }
+.step.done::before { color: var(--vscode-charts-green); }
+.step.failed::before { color: var(--vscode-charts-red); }
+.step.suspended::before { color: var(--vscode-charts-yellow); }
 
 .step-head {
   display: flex;
@@ -149,14 +194,33 @@ body {
   font-weight: 600;
   text-transform: capitalize;
 }
-.step-meta { font-size: 0.8em; font-variant-numeric: tabular-nums; }
+.step-meta {
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 400;
+}
 .step-body { margin-top: 2px; }
+
+/* The stage's own output, hanging off it. */
+.step-body .line {
+  padding-left: 14px;
+  position: relative;
+}
+.step-body .line:first-child::before {
+  content: '\2937';                        /* ⤷ */
+  position: absolute;
+  left: 0;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+}
 
 .line {
   font-size: 0.88em;
   line-height: 1.45;
   padding: 1px 0;
   word-break: break-word;
+  color: var(--vscode-descriptionForeground);
 }
 .line.warning { color: var(--vscode-charts-yellow); }
 .line.error { color: var(--vscode-charts-red); }
@@ -458,17 +522,37 @@ body.sidebar .composer-meta .spacer {
   flex: 1 1 auto;
 }
 
+/* The composer carries the same prompt marker the transcript does, so what you
+ * are about to send looks like what you already sent. The marker sits in the
+ * box's padding rather than in the field, because a character inside the field
+ * is a character you have to delete. */
+body.sidebar .composer-input {
+  position: relative;
+}
+
+body.sidebar .composer-input::before {
+  content: '>';
+  position: absolute;
+  left: 9px;
+  top: 6px;
+  color: var(--vscode-textLink-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-weight: 600;
+  pointer-events: none;
+}
+
 body.sidebar textarea {
   width: 100%;
   box-sizing: border-box;
   resize: none;
-  font-family: var(--vscode-font-family);
+  font-family: var(--vscode-editor-font-family);
   font-size: var(--vscode-font-size);
+  line-height: 1.5;
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border, transparent);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
   border-radius: 4px;
-  padding: 6px 8px;
+  padding: 6px 8px 6px 24px;
 }
 
 body.sidebar textarea:focus {

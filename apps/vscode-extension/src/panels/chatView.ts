@@ -126,7 +126,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.post({ type: 'assistantEnd', suggestions: outcome.suggestions });
           return;
         }
-        await this.startRun(text, outcome.mode ?? chosenMode ?? 'full', {}, { echo: false });
+        // A URL in the message reaches the crawler as a URL. Passing the whole
+        // sentence and hoping a later stage finds the link again is how the
+        // target ends up being the project's configured base_url instead of
+        // the one the person just typed.
+        const extra: Record<string, unknown> = {};
+        if (outcome.targetUrl) {
+          extra.target_url = outcome.targetUrl;
+        }
+        if (outcome.autopilot) {
+          this.post({
+            type: 'assistantNotice',
+            text:
+              `Nothing to go on but the URL, so I will crawl ${outcome.targetUrl}, work out ` +
+              'what it has, and automate that. Whatever I cannot see, I will not write a test for.',
+          });
+        }
+        await this.startRun(text, outcome.mode ?? chosenMode ?? 'full', extra, { echo: false });
         return;
       } catch {
         // Classification is a convenience, not a gate. If the control plane
@@ -355,12 +371,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   <div id="timeline" class="timeline">
     <div class="welcome">
       <div class="welcome-title">What should I automate?</div>
-      <div class="welcome-sub">Describe a feature in the words your team uses. Naming the
-        cases you care about gives a sharper plan than "test the page".</div>
+      <div class="welcome-sub">Paste a URL and I will crawl the application, work out what it
+        has, and automate that. Or name a feature in your team's words — saying which cases
+        you care about gives a sharper plan than "test the page".</div>
       <div class="suggestions">
+        <button class="suggestion" data-fill="http://localhost:3000">Automate a URL</button>
         <button class="suggestion" data-fill="Automate the login flow: valid sign-in, wrong password, and empty fields">Login flow</button>
         <button class="suggestion" data-fill="Automate the registration form: valid submission, required-field validation, and duplicate rejection">Registration form</button>
-        <button class="suggestion" data-cmd="aiqa.exploreApplication">Explore the app</button>
         <button class="suggestion" data-cmd="aiqa.showCoverage">Coverage gaps</button>
       </div>
     </div>
@@ -375,7 +392,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       <span id="costMeter" class="muted"></span>
       <button id="cancelBtn" class="ghost" hidden>Stop</button>
     </div>
-    <textarea id="prompt" rows="3" placeholder="Automate the resident registration page…"></textarea>
+    <div class="composer-input">
+      <textarea id="prompt" rows="3" placeholder="a URL, or the feature to automate…"></textarea>
+    </div>
     <div class="composer-actions">
       <select id="mode" title="How far the run should go">
         <option value="full">Full run</option>
