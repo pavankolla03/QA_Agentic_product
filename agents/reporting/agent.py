@@ -198,9 +198,7 @@ class ReportingAgent(BaseAgent):
     def _notify(self, ctx: AgentContext, report: RunReport, facts: dict[str, Any]) -> None:
         if not ctx.metadata.get("notify", True):
             return
-        status = (
-            "failed" if facts["failed"] else "partial" if facts["product_defects"] else "succeeded"
-        )
+        status = _notification_status(ctx, facts)
         payload = {
             "project": ctx.project.name,
             "scenarios_designed": report.scenarios_designed,
@@ -223,6 +221,30 @@ class ReportingAgent(BaseAgent):
                 ctx.note(f"summary delivered via {tool_name.split('.')[0]}")
             elif result.rule != "notify.unconfigured":
                 ctx.warn(f"{tool_name} failed: {result.error[:160]}")
+
+
+def _notification_status(ctx: AgentContext, facts: dict[str, Any]) -> str:
+    """The one word that reaches a Slack channel, and it has to be the true one.
+
+    This read "failed if any test failed, else partial if there were product
+    defects, else succeeded" — so a run that compiled nothing, bound no steps
+    and executed no tests announced itself as **succeeded**, because zero tests
+    failed. Nobody reading a channel opens the report to check a green tick.
+
+    `blocked` is the same word the run itself uses, for the same reason: the
+    platform worked and produced nothing it can vouch for.
+    """
+    blocked = (
+        ctx.metadata.get("execution_blocked")
+        or ctx.metadata.get("automation_blocked")
+        or int((ctx.metadata.get("compile_check") or {}).get("errors") or 0)
+        or (ctx.execution is not None and not ctx.execution.total)
+    )
+    if blocked:
+        return "blocked"
+    if facts["failed"]:
+        return "failed"
+    return "partial" if facts["product_defects"] else "succeeded"
 
 
 # =========================================================================== #

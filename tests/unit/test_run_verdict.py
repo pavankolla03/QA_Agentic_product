@@ -136,3 +136,42 @@ def test_both_orchestrators_decide_this_the_same_way() -> None:
     from agents.orchestrator import graph, langgraph_graph
 
     assert langgraph_graph.terminal_status is graph.terminal_status
+
+
+# --------------------------------------------------------------------------- #
+# The word that reaches a Slack channel
+# --------------------------------------------------------------------------- #
+def test_a_blocked_run_does_not_announce_itself_as_succeeded() -> None:
+    """Nobody scanning a channel opens the report to check a green tick.
+
+    The notification read "failed if any test failed, else partial if there were
+    product defects, else succeeded" — so a run that compiled nothing, bound no
+    steps and executed no tests announced **succeeded**, because zero tests
+    failed. The outbound message is the one most people ever see.
+    """
+    from agents.reporting.agent import _notification_status
+
+    ctx = _ctx(execution_blocked="Playwright is not installed in this project.")
+    ctx.execution = _execution()
+    facts = {"failed": 0, "product_defects": []}
+
+    assert _notification_status(ctx, facts) == "blocked"
+
+
+def test_a_suite_with_real_failures_still_announces_failed() -> None:
+    from agents.reporting.agent import _notification_status
+
+    ctx = _ctx()
+    ctx.execution = _execution(total=5, passed=3, failed=2)
+
+    assert _notification_status(ctx, {"failed": 2, "product_defects": []}) == "failed"
+
+
+def test_a_green_run_announces_succeeded() -> None:
+    from agents.reporting.agent import _notification_status
+
+    ctx = _ctx()
+    ctx.execution = _execution(total=5, passed=5)
+
+    assert _notification_status(ctx, {"failed": 0, "product_defects": []}) == "succeeded"
+

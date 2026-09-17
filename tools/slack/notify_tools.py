@@ -16,8 +16,11 @@ from packages.aiqa_types.enums import ToolCategory
 from packages.security.redaction import redact
 from tools.base import Tool, ToolResult
 
+# Amber, not green, for `blocked`. The platform worked and produced nothing it
+# can vouch for, and nobody scanning a channel opens the report to check a tick.
 _STATUS_COLOR = {
     "succeeded": "#2eb886",
+    "blocked": "#e8a33d",
     "failed": "#d63b3b",
     "partial": "#e8a33d",
     "cancelled": "#8a8a8a",
@@ -25,6 +28,7 @@ _STATUS_COLOR = {
 }
 _STATUS_EMOJI = {
     "succeeded": "✅",
+    "blocked": "🚧",
     "failed": "❌",
     "partial": "⚠️",
     "cancelled": "🚫",
