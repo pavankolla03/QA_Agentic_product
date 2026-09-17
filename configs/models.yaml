@@ -71,6 +71,22 @@ defaults:
   prompt_caching: true
   cache_min_chars: 2000
 
+# ── Per-tier policy ─────────────────────────────────────────────────────────
+# `defaults` above are tuned for a background job: minutes of timeout, a retry
+# budget, room for a model to think at length. A person waiting in a chat panel
+# needs the opposite of all three, and applying the background policy to a
+# conversational call is why typing a greeting could hang. A tier listed here
+# overrides the defaults; anything absent inherits them.
+policies:
+  interactive_chat:
+    # Four sentences, which is the most a chat reply should ever be.
+    max_output_tokens: 300
+    # Hard ceiling. Past this the deterministic answer is better than none.
+    timeout_seconds: 5
+    # None. A retry doubles the wait for someone already waiting, and a chat
+    # answer that arrives late is worth less than a plain one that arrives now.
+    retries: 0
+
 # ── Tier definitions ────────────────────────────────────────────────────────
 # Ordered: the router tries each in turn and falls through on failure. The
 # fallback chain matters more than usual here, because any free model can be
@@ -97,6 +113,16 @@ routes:
     - { provider: openrouter, model: "nvidia/nemotron-3-super-120b-a12b:free",             in: 0, out: 0 }
     - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
     - { provider: mock,       model: "mock-coding",                                        in: 0, out: 0 }
+
+  # A person is waiting. Only models measured to answer a short prompt in
+  # single-digit seconds belong here, and the tier falls through to `mock`
+  # rather than to anything slow — a deterministic sentence beats a spinner.
+  interactive_chat:
+    - { provider: openrouter, model: "inclusionai/ling-3.0-flash-vl:free",                 in: 0, out: 0 }
+    - { provider: openrouter, model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", in: 0, out: 0 }
+    - { provider: openrouter, model: "nex-agi/nex-n2.5-mini:free",                         in: 0, out: 0 }
+    - { provider: ollama,     model: "qwen2.5-coder:7b",                                   in: 0, out: 0 }
+    - { provider: mock,       model: "mock-cheap",                                         in: 0, out: 0 }
 
   # Ordered by measured latency, fastest first: these calls are frequent, so
   # seconds compound across a run.

@@ -34,8 +34,9 @@ from configs.settings import get_settings, load_project_standards
 from packages.aiqa_types.enums import ApprovalStatus, AuditAction, RunMode, RunStatus
 from packages.aiqa_types.models import Project, RunRequest, new_id
 from packages.security.guard import PolicyViolation
+from services.agent_engine.conversation import ConversationService
 from services.agent_engine.engine import AgentEngine, RunNotFound, get_engine
-from services.agent_engine.intent import classify
+from services.agent_engine.intents import resolve
 from services.api_gateway.auth import (
     CurrentPrincipal,
     Principal,
@@ -171,6 +172,62 @@ def _iso(value: datetime | None) -> str:
 # =========================================================================== #
 # Health & metadata
 # =========================================================================== #
+@api.get("/health/live", tags=["system"])
+async def health_live() -> dict[str, str]:
+    """Is this process alive? Nothing else.
+
+    Deliberately touches no database, no Redis and no provider. A liveness
+    probe that can be made slow by a third party is not a liveness probe — it
+    is a way to have a healthy process restarted because somebody else's API
+    was busy.
+    """
+    return {"status": "ok", "version": VERSION}
+
+
+@api.get("/health/ready", tags=["system"])
+async def health_ready() -> JSONResponse:
+    """Can this process actually serve? Database and queue only.
+
+    Model providers are excluded on purpose: the platform is still useful with
+    every provider down — deterministic answers, run history, cost queries and
+    the whole execution layer keep working.
+    """
+    checks: dict[str, str] = {}
+    try:
+        with session_scope() as session:
+            session.execute(select(func.count(RunRow.id)).limit(1)).scalar_one()
+        checks["database"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["database"] = f"unavailable: {str(exc)[:120]}"
+
+    ready = all(value == "ok" for value in checks.values())
+    return JSONResponse(
+        {"status": "ready" if ready else "not_ready", "checks": checks},
+        status_code=200 if ready else 503,
+    )
+
+
+@api.get("/health/providers", tags=["system"])
+async def health_providers() -> dict[str, Any]:
+    """Model provider diagnostics — the expensive one, asked for explicitly.
+
+    This probes upstream APIs, so it belongs behind its own URL rather than
+    inside a request somebody is waiting on. Ordinary chat must never pay for
+    it, which is the entire reason it is not part of `/health/live`.
+    """
+    router = _router()
+    try:
+        snapshot = await router.status()
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "detail": str(exc)[:300], "providers": {}}
+    return {
+        "status": "ok",
+        "active_routes": snapshot.get("active_routes", {}),
+        "providers": snapshot.get("providers", {}),
+        "free_only": router.free_only,
+    }
+
+
 @api.get("/health", response_model=HealthOut, tags=["system"])
 async def health() -> HealthOut:
     settings = get_settings()
@@ -438,37 +495,46 @@ def _run_summary(row: RunRow, project_name: str = "", pending: str = "") -> RunS
 async def chat(payload: ChatIn, principal: Principal = requires("run:read")) -> ChatOut:
     """Answer a chat message, or say that it warrants a run.
 
-    Every message used to become a run: ten agents, a crawl, code generation,
-    several minutes of free models. For "Hi" that produced no answer at all,
-    which is indistinguishable from a chat that does not work.
+    Three tiers, in order, and most messages never leave the first two:
 
-    Most messages never need a model. The ones that do get one short call on
-    the cheap tier, and if that is unavailable the message is answered
-    conservatively rather than escalated into a run — a wrong sentence costs a
-    sentence, a wrong run costs five minutes and writes files.
+    1. **A named intent with a deterministic answer.** "How many tests failed?"
+       is a database row, not a question for a model. Answering it by query is
+       faster, cheaper, correct, and still works when every provider is rate
+       limited — the one case where a model is strictly worse than SQL.
+    2. **A request for work.** Becomes a run, as it always did.
+    3. **Genuinely ambiguous prose.** One short call on the `interactive_chat`
+       tier: five-second ceiling, three hundred tokens, no retries.
+
+    The fallback is always to *answer*, never to escalate into a run. A wrong
+    sentence costs a sentence; a wrong run costs five minutes and writes files.
     """
-    intent = classify(payload.message)
-    if intent.kind == "run":
-        return ChatOut(kind="run", mode=intent.mode)
-    if intent.confident and intent.text:
-        return ChatOut(kind="reply", text=intent.text, suggestions=intent.suggestions)
+    resolution = resolve(payload.message)
 
-    context = _chat_context(payload.project_id, principal)
+    if resolution.intent.starts_a_run:
+        return ChatOut(kind="run", mode=resolution.mode)
+
+    project_id = payload.project_id or ""
+    answer = ConversationService(project_id=project_id, org_id=principal.org_id).answer(resolution)
+    if answer is not None:
+        return ChatOut(kind="reply", text=answer.text, suggestions=answer.suggestions or [])
+
+    # Nothing deterministic fits. Ask a model, briefly.
+    context = _chat_context(project_id, principal)
     try:
-        answer = await _engine().answer(payload.message, context=context)
+        reply = await _engine().answer(payload.message, context=context)
     except Exception:  # noqa: BLE001 - a chat reply must never fail the panel
         log.debug("chat answer failed", exc_info=True)
-        answer = ""
+        reply = ""
 
-    if answer.strip().upper().startswith("RUN"):
+    if reply.strip().upper().startswith("RUN"):
         return ChatOut(kind="run", mode=RunMode.FULL)
-    if not answer:
-        answer = (
-            "I could not reach a model to answer that. Ask me to automate "
-            "something and I will start a run, which does not need one for the "
-            "first few steps."
+    if not reply:
+        reply = (
+            "I could not reach a model in time to answer that. Ask me about a run, "
+            "a failure or today's cost and I will answer from my own records, which "
+            "needs no model at all."
         )
-    return ChatOut(kind="reply", text=answer)
+    return ChatOut(kind="reply", text=reply)
 
 
 def _chat_context(project_id: str, principal: Principal) -> str:
@@ -488,19 +554,19 @@ def _chat_context(project_id: str, principal: Principal) -> str:
                     .limit(3)
                 ).scalars()
             )
+            lines = [
+                f"Project: {project.name}",
+                f"Repository: {project.repository_path}",
+                f"Application under test: {project.base_url or '(none set)'}",
+            ]
+            if runs:
+                lines.append("Recent runs:")
+                lines += [
+                    f"  - {r.instruction[:70]} ({r.status}, {r.tests_passed}/{r.tests_total} passing)"
+                    for r in runs
+                ]
     except Exception:  # noqa: BLE001
         return ""
-    lines = [
-        f"Project: {project.name}",
-        f"Repository: {project.repository_path}",
-        f"Application under test: {project.base_url or '(none set)'}",
-    ]
-    if runs:
-        lines.append("Recent runs:")
-        lines += [
-            f"  - {r.instruction[:70]} ({r.status}, {r.tests_passed}/{r.tests_total} passing)"
-            for r in runs
-        ]
     return "\n".join(lines)
 
 

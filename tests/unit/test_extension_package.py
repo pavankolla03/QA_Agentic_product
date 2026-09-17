@@ -346,3 +346,41 @@ def test_the_webview_can_render_an_answer() -> None:
 
     chat_css = (EXTENSION / "media" / "chat.css").read_text(encoding="utf-8")
     assert ".assistant" in chat_css, "an unstyled answer is an answer nobody reads"
+
+
+def test_health_is_split_so_chat_never_probes_providers() -> None:
+    """A liveness probe that a third party can make slow is not a liveness probe.
+
+    Provider health costs seconds — the probe has an eight-second ceiling of
+    its own — so it belongs behind its own URL rather than inside anything a
+    person is waiting on. Measured: /health/live 261ms, /health/providers
+    3527ms.
+    """
+    app_source = (
+        Path(__file__).resolve().parents[2] / "services" / "api_gateway" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    for route in ("/health/live", "/health/ready", "/health/providers"):
+        assert f'"{route}"' in app_source, f"{route} is missing"
+
+    live = app_source[app_source.index('@api.get("/health/live"'):]
+    live = live[: live.index("@api.get(", 10)]
+    assert "_router()" not in live, "liveness must not touch the model router"
+    assert "session_scope" not in live, "liveness must not touch the database"
+
+
+def test_the_chat_endpoint_tries_the_database_before_a_model() -> None:
+    """"How many tests failed?" is a row, not a question for a model."""
+    app_source = (
+        Path(__file__).resolve().parents[2] / "services" / "api_gateway" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    chat = app_source[app_source.index('@api.post("/chat"'):]
+    chat = chat[: chat.index("\ndef _chat_context(")]
+
+    assert chat.index("ConversationService(") < chat.index("_engine().answer("), (
+        "the deterministic answer has to be attempted first, or it saves nobody anything"
+    )
+    assert chat.index("starts_a_run") < chat.index("ConversationService("), (
+        "work should not be routed through the answerer"
+    )

@@ -210,10 +210,21 @@ class Capability(StrEnum):
     REASONING = "reasoning"
     EMBEDDING = "embedding"
     FAST = "fast"          # deprecated alias, routed to CHEAP
+    #: A person is sitting and waiting for this one.
+    #:
+    #: Every other tier is tuned for a background job: minutes of timeout, a
+    #: retry budget, room for a model to think at length. Applying that policy
+    #: to a chat message is why typing "Hi" could hang — the settings that make
+    #: a code-generation call succeed are the settings that make a
+    #: conversational call unusable.
+    INTERACTIVE_CHAT = "interactive_chat"
 
     @property
     def rank(self) -> int:
-        return {"cheap": 0, "fast": 0, "coding": 1, "reasoning": 2, "embedding": 0}[self.value]
+        return {
+            "cheap": 0, "fast": 0, "interactive_chat": 0,
+            "coding": 1, "reasoning": 2, "embedding": 0,
+        }[self.value]
 
 
 class ProviderName(StrEnum):

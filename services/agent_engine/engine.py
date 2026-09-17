@@ -90,6 +90,8 @@ class AgentEngine:
         #: run_id -> listeners, for live WebSocket streaming
         self._listeners: dict[str, list[EventSink]] = {}
         self._running: dict[str, asyncio.Task[Any]] = {}
+        #: Built once, on the first chat message, and kept. See `chat_router`.
+        self._chat_router: ModelRouter | None = None
 
     # ------------------------------------------------------------------ #
     # Subscriptions
@@ -112,24 +114,36 @@ class AgentEngine:
     # ------------------------------------------------------------------ #
     # Creating a run
     # ------------------------------------------------------------------ #
+    @property
+    def chat_router(self) -> ModelRouter:
+        """One router for the life of the process, shared by every chat message.
+
+        A router carries the state that makes the *second* call fast: which
+        providers answered, which are rate limited, which models are cooling
+        off, and the HTTP connections themselves. Building one per message threw
+        all of that away and re-probed provider health — up to eight seconds —
+        before the model was even asked anything.
+        """
+        if self._chat_router is None:
+            self._chat_router = ModelRouter(offline=self.offline)
+        return self._chat_router
+
     async def answer(self, message: str, *, context: str = "") -> str:
         """One short reply to one chat message. No run, no agents, no files.
 
-        The cheap tier and a small ceiling, because this is the call a person
-        is sitting and waiting for. Everything else this class does is
-        measured in minutes; this has to be measured in seconds or it is not
-        worth doing at all.
+        Routed through `interactive_chat`, whose policy is the opposite of
+        every other tier's: a five-second ceiling, three hundred output tokens,
+        and no retries. Everything else this class does is measured in minutes.
+        This has to be measured in seconds or it is not worth doing at all.
         """
         from packages.llm_provider.base import ChatMessage
         from services.agent_engine.intent import ANSWER_SYSTEM
 
         system = ANSWER_SYSTEM + (f"\n\n## This project\n{context}" if context else "")
-        router = ModelRouter(offline=self.offline)
-        response = await router.complete(
+        response = await self.chat_router.complete(
             [ChatMessage.system(system), ChatMessage.user(message)],
-            capability=Capability.CHEAP,
+            capability=Capability.INTERACTIVE_CHAT,
             task="chat.answer",
-            max_tokens=400,
             temperature=0.3,
         )
         return (response.text or "").strip()

@@ -150,6 +150,9 @@ class ModelRouter:
         self.free_only = bool(defaults.get("free_only", False))
 
         self._aliases: dict[str, str] = dict(self.config.get("aliases", {}) or {})
+        # Per-tier overrides of the three settings that decide whether a caller
+        # waits. Everything else inherits `defaults`.
+        self._policies: dict[str, dict[str, Any]] = dict(self.config.get("policies", {}) or {})
         self._task_capability: dict[str, str] = dict(self.config.get("task_capability", {}) or {})
         self._agent_capability: dict[str, str] = dict(self.config.get("agent_capability", {}) or {})
 
@@ -217,6 +220,16 @@ class ModelRouter:
             ok = False
         self._health[name] = (bool(ok), now)
         return bool(ok)
+
+    def policy_for(self, tier: str | Capability) -> dict[str, Any]:
+        """The timeout, output ceiling and retry budget this tier is entitled to.
+
+        A background job and a chat message make the same kind of call and want
+        opposite settings from it. Expressing that per tier keeps the decision
+        in configuration rather than scattered through call sites.
+        """
+        name = self._normalise_tier(tier)
+        return dict(self._policies.get(name, {}))
 
     def invalidate_health(self) -> None:
         self._health.clear()
@@ -361,14 +374,20 @@ class ModelRouter:
 
         chosen_tier = self.tier_for(task=task, agent=agent, explicit=tier or capability)
 
+        policy = self.policy_for(chosen_tier)
         request = LLMRequest(
             messages=list(messages),
             temperature=self.default_temperature if temperature is None else temperature,
-            max_tokens=self.default_max_tokens if max_tokens is None else max_tokens,
+            max_tokens=(
+                max_tokens
+                if max_tokens is not None
+                else int(policy.get("max_output_tokens", self.default_max_tokens))
+            ),
             json_mode=json_mode,
-            timeout_seconds=self.default_timeout,
+            timeout_seconds=int(policy.get("timeout_seconds", self.default_timeout)),
             task=task,
         )
+        attempts = int(policy.get("retries", self.retries))
         prompt_text = request.prompt_text
 
         if complexity is None:
@@ -412,7 +431,7 @@ class ModelRouter:
             assert provider is not None
             attempt_error: Exception | None = None
 
-            for attempt in range(self.retries + 1):
+            for attempt in range(attempts + 1):
                 started = time.perf_counter()
                 try:
                     response = await provider.chat(request)
@@ -429,7 +448,7 @@ class ModelRouter:
                             status="failed", error=str(exc)[:500],
                         )
                     )
-                    if not exc.retryable or attempt >= self.retries:
+                    if not exc.retryable or attempt >= attempts:
                         break
                     await asyncio.sleep(min(2**attempt, 8))
                     continue
@@ -547,7 +566,7 @@ class ModelRouter:
                 "quota": self.quotas[name].snapshot() if name in self.quotas else None,
             }
         routes: dict[str, Any] = {}
-        for tier in ("cheap", "coding", "reasoning", "embedding"):
+        for tier in ("interactive_chat", "cheap", "coding", "reasoning", "embedding"):
             chosen = await self.resolve(tier)
             routes[tier] = (
                 {

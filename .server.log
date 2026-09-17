@@ -5,13 +5,19 @@
 │ Dashboard http://127.0.0.1:8099/                                        │
 │ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
 └─────────────────────────────────────────────────────────────────────────┘
-INFO:     127.0.0.1:63894 - "GET /api/health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63895 - "GET /api/runs?limit=6 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63897 - "GET /api/runs/run_494677660098488a HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51468 - "POST /api/chat HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51469 - "POST /api/chat HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51470 - "POST /api/runs HTTP/1.1" 201 Created
-INFO:     127.0.0.1:51477 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51481 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:65409 - "GET /api/runs/run_b7c7efe08e254450 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:65410 - "GET /api/runs/run_b7c7efe08e254450/events HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65001 - "GET /api/health/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65002 - "GET /api/health/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65004 - "GET /api/health/ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65005 - "GET /api/health/providers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65009 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65010 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65011 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65012 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65013 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65014 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65015 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65016 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65017 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65018 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56384 - "POST /api/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56388 - "POST /api/chat HTTP/1.1" 200 OK
