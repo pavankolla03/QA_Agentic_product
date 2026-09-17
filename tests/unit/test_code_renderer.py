@@ -821,3 +821,55 @@ def test_steps_differing_only_in_their_argument_are_one_expression() -> None:
 
     assert source.count("When('I submit with {string} left empty'") == 1
 
+
+# --------------------------------------------------------------------------- #
+# Parameter names that compile
+# --------------------------------------------------------------------------- #
+def test_a_parameter_is_never_called_string() -> None:
+    """A plan from "fill the form with {string}" names every parameter "string".
+
+    Rendered literally that is `fillForm(string: string, string: string, ...)`:
+    the parameter shadows the type in its own annotation and then shadows
+    itself, which TypeScript rejects once per placeholder. A real run produced
+    exactly that, and a page object that does not compile takes the whole suite
+    with it.
+    """
+    plan = PagePlan(
+        class_name="ResidentsPage",
+        route="/residents/new",
+        locators={"fullName": "getByTestId('name')", "email": "getByTestId('email')"},
+        methods=[
+            MethodPlan(name="fillForm", kind="action",
+                       params=["string", "string", "string"], locators=["fullName", "email"])
+        ],
+    )
+    source = render_page_object(plan)
+
+    assert "async fillForm(value1: string, value2: string, value3: string)" in source
+    assert "string: string" not in source
+
+
+def test_two_parameters_never_share_a_name() -> None:
+    plan = PagePlan(
+        class_name="ResidentsPage",
+        route="/r",
+        locators={"a": "getByTestId('a')"},
+        methods=[MethodPlan(name="check", kind="assertion", params=["value", "value", "value"])],
+    )
+    source = render_page_object(plan)
+
+    signature = next(line for line in source.splitlines() if "async check(" in line)
+    names = [part.split(":")[0].strip() for part in signature.split("(")[1].split(")")[0].split(",")]
+    assert len(set(names)) == len(names), signature
+
+
+def test_a_meaningful_parameter_name_is_kept() -> None:
+    """Only the unusable ones are renamed. `email` reads better than `value1`."""
+    plan = PagePlan(
+        class_name="ResidentsPage",
+        route="/r",
+        locators={"email": "getByTestId('email')"},
+        methods=[MethodPlan(name="fillEmail", kind="action", params=["email"], locators=["email"])],
+    )
+    assert "async fillEmail(email: string)" in render_page_object(plan)
+
