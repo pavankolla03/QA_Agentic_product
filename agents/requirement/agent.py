@@ -14,7 +14,13 @@ from typing import Any
 from agents.base import AgentContext, BaseAgent
 from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import AcceptanceCriterion, Requirement
+from services.discovery.urls import autopilot_target
 from tools.jira.jira_tools import ISSUE_KEY_RE
+
+#: How wide autopilot crawls. Eight pages is enough for a named feature and
+#: nowhere near enough for "the whole application"; past thirty the plan stops
+#: being reviewable by a person, which is the real limit.
+AUTOPILOT_EXPLORE_PAGES = 30
 
 SYSTEM = """You are a senior QA requirements analyst. You convert a feature request into precise, \
 testable acceptance criteria for automated testing.
@@ -42,7 +48,57 @@ class RequirementAgent(BaseAgent):
     def progress(self, ctx: AgentContext) -> float:
         return 0.08
 
+    # ------------------------------------------------------------------ #
+    def _autopilot(self, ctx: AgentContext) -> bool:
+        """A URL and nothing else: let the application state its own requirement.
+
+        There is no prose here to analyse. Asking a model what to test at a URL
+        it has never loaded produces a confident list of features the site does
+        not have, bound to locators that do not exist — the most expensive kind
+        of wrong, because every later stage treats it as ground truth.
+
+        So this stage deliberately produces a requirement with **no acceptance
+        criteria**. Exploration fills them in from what it actually found, and
+        test design refuses to proceed if it found nothing. An empty requirement
+        that fails loudly beats a full one that was invented.
+        """
+        url = autopilot_target(ctx.instruction or "")
+        if not url:
+            return False
+
+        ctx.metadata["autopilot"] = True
+        ctx.metadata["target_url"] = url
+        # A named feature needs a handful of pages. A whole application needs
+        # as many as the budget allows, because the crawl *is* the requirement.
+        ctx.metadata["max_explore_pages"] = max(
+            int(ctx.metadata.get("max_explore_pages") or 0), AUTOPILOT_EXPLORE_PAGES
+        )
+
+        ctx.requirement = Requirement(
+            raw_input=ctx.instruction,
+            title=f"Automate the application at {url}",
+            summary=(
+                f"No requirement was supplied — only the URL {url}. The application itself "
+                "is the specification: exploration will crawl it and name the features it "
+                "can see, and those become the acceptance criteria for this run."
+            ),
+            feature_area="application",
+            actors=["user"],
+            preconditions=[f"{url} is reachable"],
+            acceptance_criteria=[],
+            ambiguity_score=0.1,
+            source="chat",
+        )
+        ctx.note(
+            f"autopilot: no requirement given, so {url} will be crawled and whatever it "
+            f"shows becomes the plan (up to {AUTOPILOT_EXPLORE_PAGES} pages)"
+        )
+        return True
+
     async def run(self, ctx: AgentContext) -> None:
+        if self._autopilot(ctx):
+            return
+
         source = "chat"
         source_ref: str | None = None
         requirement_text = ctx.instruction

@@ -90,6 +90,15 @@ class ChatOut(BaseModel):
     text: str = ""
     mode: RunMode = RunMode.FULL
     suggestions: list[str] = Field(default_factory=list)
+    #: The application the message pointed at, when it named one. The caller
+    #: passes this straight back as `RunCreate.target_url` so that "automate
+    #: https://shop.example.com" reaches the crawler as a URL rather than as a
+    #: sentence somebody has to re-read.
+    target_url: str = ""
+    #: True when the scope of the run is whatever the crawl finds, rather than
+    #: what the message asked for. The UI says so before starting, because
+    #: "automate everything" is worth confirming.
+    autopilot: bool = False
 
 
 class RunCreate(BaseModel):

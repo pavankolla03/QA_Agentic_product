@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from packages.aiqa_types.enums import RunMode
+from services.discovery.urls import URL_RE, extract_url, is_bare_url_request
 
 
 class Intent(StrEnum):
@@ -34,6 +35,10 @@ class Intent(StrEnum):
     RUN_TESTS = "RUN_TESTS"
     RUN_HEAL = "RUN_HEAL"
     RUN_EXPLORE = "RUN_EXPLORE"
+    #: A URL and nothing else: discover the application, then automate what was
+    #: found. The one intent whose scope is decided by the crawl rather than by
+    #: the sentence that started it.
+    RUN_AUTOPILOT = "RUN_AUTOPILOT"
     RUN_CANCEL = "RUN_CANCEL"
     RUN_RETRY = "RUN_RETRY"
 
@@ -63,7 +68,13 @@ class Intent(StrEnum):
 
 
 _RUN_INTENTS = frozenset(
-    {Intent.RUN_CREATE, Intent.RUN_TESTS, Intent.RUN_HEAL, Intent.RUN_EXPLORE}
+    {
+        Intent.RUN_CREATE,
+        Intent.RUN_TESTS,
+        Intent.RUN_HEAL,
+        Intent.RUN_EXPLORE,
+        Intent.RUN_AUTOPILOT,
+    }
 )
 _QUERY_INTENTS = frozenset(
     {
@@ -83,6 +94,9 @@ RUN_MODES: dict[Intent, RunMode] = {
     Intent.RUN_TESTS: RunMode.EXECUTE_ONLY,
     Intent.RUN_HEAL: RunMode.HEAL_ONLY,
     Intent.RUN_EXPLORE: RunMode.PLAN_ONLY,
+    # Autopilot is a full run. Stopping at a plan would mean answering "what
+    # can you test here?" with a list, when the question asked was "test it".
+    Intent.RUN_AUTOPILOT: RunMode.FULL,
 }
 
 
@@ -97,6 +111,10 @@ class Resolution:
     suggestions: list[str] = field(default_factory=list)
     #: A run id the message referred to, when it named one.
     run_id: str = ""
+    #: The application the message pointed at. Set whenever a URL appears,
+    #: whatever the intent - "automate the login page at https://x" is a
+    #: RUN_CREATE that still knows where to look.
+    target_url: str = ""
 
     @property
     def mode(self) -> RunMode:
@@ -161,6 +179,7 @@ _QA_NOUNS = (
 )
 
 _RUN_ID_RE = re.compile(r"\b(run_[0-9a-f]{8,}|QA-\d+)\b", re.IGNORECASE)
+
 _QUESTION_OPENERS = ("what", "why", "when", "where", "who", "which", "is", "are", "can", "does", "do", "how")
 
 
@@ -170,10 +189,24 @@ def _normalise(message: str) -> str:
 
 def resolve(message: str) -> Resolution:
     """Name what this message wants, without a model wherever possible."""
-    text = _normalise(message)
     run_id = (_RUN_ID_RE.search(message or "") or [None])[0] if message else None
     run_id = run_id if isinstance(run_id, str) else ""
 
+    target_url = extract_url(message or "")
+    text = _normalise(URL_RE.sub(" ", message or "") if target_url else (message or ""))
+
+    if target_url and is_bare_url_request(text):
+        # A URL with nothing meaningful around it. There is no requirement to
+        # interpret, so the application itself becomes the requirement: crawl
+        # it, name what is there, automate that.
+        return Resolution(Intent.RUN_AUTOPILOT, run_id=run_id, target_url=target_url)
+
+    resolution = _classify(text, run_id)
+    resolution.target_url = target_url
+    return resolution
+
+
+def _classify(text: str, run_id: str) -> Resolution:
     if not text:
         return Resolution(Intent.CONVERSATION)
 

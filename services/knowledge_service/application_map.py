@@ -352,12 +352,23 @@ class ApplicationMap:
         Only an exact hash counts. Two genuinely different pages that happen to
         look similar must stay separate, and a page whose DOM is empty tells us
         nothing at all.
+
+        The hash alone is not enough. A create form and an edit form for the
+        same record have exactly the same fields, so they hash identically while
+        being two different pages with two different behaviours — collapsing
+        them meant the edit form was never tested and nobody was told. The title
+        is what separates them, and it still catches the case this aliasing
+        exists for: twenty routes all serving the same login page share a title
+        as surely as they share a DOM.
         """
         if not page.dom_hash:
             return None
         for route, known in self.pages.items():
-            if route != page.route and known.get("dom_hash") == page.dom_hash:
-                return route
+            if route == page.route or known.get("dom_hash") != page.dom_hash:
+                continue
+            if _differs(page.title, known.get("title")):
+                continue
+            return route
         return None
 
     # ------------------------------------------------------------------ #
@@ -597,6 +608,17 @@ def detect_components(pages: list[PageKnowledge]) -> dict[str, dict[str, Any]]:
     return found
 
 
+def _differs(title: str, other: Any) -> bool:
+    """Do these two page titles positively disagree?
+
+    A missing title is not a disagreement - plenty of pages have none, and
+    treating "unknown" as "different" would disable aliasing entirely.
+    """
+    left = (title or "").strip().casefold()
+    right = (str(other) if other else "").strip().casefold()
+    return bool(left) and bool(right) and left != right
+
+
 def dom_hash(elements: list[dict[str, Any]]) -> str:
     """Stable fingerprint of a page's interactive surface.
 
@@ -604,6 +626,13 @@ def dom_hash(elements: list[dict[str, Any]]) -> str:
     churn should not invalidate perfectly good locator knowledge, but a field
     appearing or disappearing should.
     """
+    # A page with no interactive elements has no fingerprint. Hashing the empty
+    # list gives a perfectly stable value that every such page shares, which
+    # made each one an alias of the first: a demo app's /dashboard and /reports
+    # both crawled clean, and /reports was recorded as the same page and never
+    # tested. An unknown fingerprint must read as unknown, not as a match.
+    if not elements:
+        return ""
     signature = sorted(
         f"{element.get('role', '')}:{element.get('name', '')}:{element.get('input_type', '')}"
         for element in elements

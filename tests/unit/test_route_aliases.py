@@ -14,7 +14,7 @@ modelled the wrong page entirely.
 
 from __future__ import annotations
 
-from services.knowledge_service.application_map import ApplicationMap, PageKnowledge
+from services.knowledge_service.application_map import ApplicationMap, PageKnowledge, dom_hash
 
 LOGIN_ELEMENTS = [
     {"name": "Username", "role": "textbox", "locator": "getByTestId('login-username')", "confidence": 0.98},
@@ -131,3 +131,69 @@ def test_between_two_guesses_the_first_one_keeps_the_page() -> None:
     m.put_page(PageKnowledge(route="/form", dom_hash="abc", elements=LOGIN_ELEMENTS))
     assert m.known_routes() == ["/login"]
     assert m.aliases == {"/form": "/login"}
+
+
+# --------------------------------------------------------------------------- #
+# Aliasing that went too far
+# --------------------------------------------------------------------------- #
+# Collapsing a catch-all is worth doing; collapsing a real page is worse than
+# not collapsing anything, because the lost page is never tested and the run
+# still reports success. Both cases below were found by pointing autopilot at a
+# six-page demo application and getting four features back.
+def test_two_pages_with_nothing_on_them_are_not_the_same_page() -> None:
+    """An unknown fingerprint must read as unknown, not as a match.
+
+    /dashboard and /reports both render prose and no controls. Hashing their
+    empty element lists gave the same perfectly stable value, so /reports became
+    an alias of /dashboard and dropped out of the plan silently.
+    """
+    m = ApplicationMap(project_id="p", base_url="http://x")
+    m.put_page(PageKnowledge(route="/dashboard", title="Dashboard", elements=[], dom_hash=dom_hash([])))
+    m.put_page(PageKnowledge(route="/reports", title="Reports", elements=[], dom_hash=dom_hash([])))
+
+    assert dom_hash([]) == ""
+    assert m.aliases == {}
+    assert sorted(m.known_routes()) == ["/dashboard", "/reports"]
+
+
+def test_a_create_form_and_an_edit_form_are_two_pages() -> None:
+    """Same fields, different page.
+
+    /residents/new and /residents/:id/edit carry an identical field set, so they
+    hash identically. They behave differently, and the edit path is exactly the
+    one a suite is most likely to be missing.
+    """
+    fields = [
+        {"name": "Full name", "role": "textbox", "locator": "getByTestId('name')", "confidence": 0.98},
+        {"name": "Email", "role": "textbox", "locator": "getByTestId('email')", "confidence": 0.98},
+    ]
+    m = ApplicationMap(project_id="p", base_url="http://x")
+    m.put_page(PageKnowledge(route="/residents/new", title="Add resident", dom_hash="same", elements=fields))
+    m.put_page(PageKnowledge(route="/residents/:id/edit", title="Edit resident", dom_hash="same", elements=fields))
+
+    assert m.aliases == {}
+    assert sorted(m.known_routes()) == ["/residents/:id/edit", "/residents/new"]
+
+
+def test_a_catch_all_is_still_collapsed_when_the_title_matches() -> None:
+    """The original bug must stay fixed.
+
+    Twenty routes serving the same login page share its title as surely as they
+    share its DOM, so requiring the title to agree costs this nothing.
+    """
+    m = ApplicationMap(project_id="p", base_url="http://x")
+    m.put_page(PageKnowledge(route="/login", title="Sign in", dom_hash="abc", elements=LOGIN_ELEMENTS))
+    for route in ("/automation", "/valid", "/form"):
+        m.put_page(PageKnowledge(route=route, title="Sign in", dom_hash="abc", elements=LOGIN_ELEMENTS))
+
+    assert m.known_routes() == ["/login"]
+    assert set(m.aliases) == {"/automation", "/valid", "/form"}
+
+
+def test_a_missing_title_does_not_block_aliasing() -> None:
+    """Plenty of pages have no title; "unknown" is not "different"."""
+    m = ApplicationMap(project_id="p", base_url="http://x")
+    m.put_page(PageKnowledge(route="/login", title="", dom_hash="abc", elements=LOGIN_ELEMENTS))
+    m.put_page(PageKnowledge(route="/valid", title="", dom_hash="abc", elements=LOGIN_ELEMENTS))
+
+    assert m.aliases == {"/valid": "/login"}

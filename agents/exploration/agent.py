@@ -23,12 +23,14 @@ from typing import Any
 from agents.base import AgentContext, BaseAgent, json_block
 from packages.aiqa_types.enums import AgentName, Capability
 from packages.aiqa_types.models import (
+    AcceptanceCriterion,
     DiscoveredElement,
     DiscoveredWorkflow,
     ExplorationResult,
     PageSnapshot,
     WorkflowStep,
 )
+from services.discovery.autopilot import derive_features, summarise
 from services.knowledge_service.application_map import (
     ApplicationMap,
     LocatorKnowledge,
@@ -163,7 +165,7 @@ class ExplorationAgent(BaseAgent):
         result = self.tool(
             ctx, "playwright.explore",
             base_url=base_url, paths=to_explore,
-            max_pages=min(len(to_explore) + 2, ctx.metadata.get("max_explore_pages", 8)),
+            max_pages=self._page_budget(ctx, to_explore),
         )
         if not result.ok:
             ctx.warn(f"exploration failed: {result.error[:250]}")
@@ -237,7 +239,73 @@ class ExplorationAgent(BaseAgent):
         self._finish(ctx, app_map)
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _page_budget(ctx: AgentContext, to_explore: list[str]) -> int:
+        """How many pages this crawl may visit.
+
+        For a named feature the answer is "the routes we asked for, plus a
+        couple of links off them" — crawling the rest of the application to
+        automate one form is time nobody asked us to spend.
+
+        Autopilot is the opposite case. The crawl *is* the requirement, and the
+        routes we can name up front are only the front door, so the budget is
+        the whole allowance and the crawler spends it following links.
+        """
+        allowance = int(ctx.metadata.get("max_explore_pages") or 8)
+        if ctx.metadata.get("autopilot"):
+            return max(allowance, len(to_explore))
+        return min(len(to_explore) + 2, allowance)
+
+    def _autopilot_criteria(self, ctx: AgentContext, app_map: ApplicationMap) -> None:
+        """Turn the crawl into the acceptance criteria the run was missing.
+
+        Autopilot arrives here with a deliberately empty requirement: nobody
+        described what to test, so nothing could honestly be written down until
+        the application had been looked at. This is where it gets written down,
+        and only from what was actually seen.
+
+        If nothing was found, nothing is invented. The requirement stays empty
+        and test design refuses it — which surfaces as a failed run naming the
+        URL, rather than a green run full of tests for a site we never reached.
+        """
+        if not ctx.metadata.get("autopilot") or ctx.requirement is None:
+            return
+
+        base_url = ctx.metadata.get("target_url") or ctx.project.base_url or ""
+        features = derive_features(app_map)
+        ctx.metadata["discovered_features"] = [feature.as_dict() for feature in features]
+
+        if not features:
+            ctx.warn(
+                f"autopilot found nothing testable at {base_url}. No acceptance criteria were "
+                "written, because there is no evidence to write any from."
+            )
+            return
+
+        ctx.requirement.summary = summarise(features, base_url)
+        ctx.requirement.acceptance_criteria = [
+            AcceptanceCriterion(text=text, testable=True, rationale=feature.rationale)
+            for feature in features
+            for text in feature.criteria
+        ]
+        ctx.requirement.feature_area = ", ".join(
+            sorted({feature.kind for feature in features})
+        )[:120]
+
+        headline = "; ".join(f"{feature.name} ({feature.kind})" for feature in features[:5])
+        ctx.note(
+            f"autopilot derived {len(ctx.requirement.acceptance_criteria)} acceptance criteria "
+            f"from {len(features)} discovered feature(s): {headline}"
+        )
+        unverified = [feature for feature in features if feature.simulated]
+        if unverified:
+            ctx.warn(
+                f"{len(unverified)} of the discovered feature(s) come from pages captured over "
+                "plain HTTP rather than in a browser; their interactions are unverified."
+            )
+
     def _finish(self, ctx: AgentContext, app_map: ApplicationMap) -> None:
+        self._autopilot_criteria(ctx, app_map)
         app_map.save(ctx.project_root)
         # Only a JSON-safe summary belongs in metadata (it is persisted).
         ctx.metadata["application_map_stats"] = app_map.stats()

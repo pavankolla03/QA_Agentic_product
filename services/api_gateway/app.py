@@ -44,7 +44,7 @@ from packages.aiqa_types.models import Project, RunRequest, new_id
 from packages.security.guard import PolicyViolation
 from services.agent_engine.conversation import ConversationService
 from services.agent_engine.engine import AgentEngine, RunNotFound, get_engine
-from services.agent_engine.intents import resolve
+from services.agent_engine.intents import Intent, resolve
 from services.api_gateway.auth import (
     CurrentPrincipal,
     Principal,
@@ -538,7 +538,12 @@ async def chat(payload: ChatIn, principal: Principal = requires("run:read")) -> 
     resolution = resolve(payload.message)
 
     if resolution.intent.starts_a_run:
-        return ChatOut(kind="run", mode=resolution.mode)
+        return ChatOut(
+            kind="run",
+            mode=resolution.mode,
+            target_url=resolution.target_url,
+            autopilot=resolution.intent is Intent.RUN_AUTOPILOT,
+        )
 
     project_id = payload.project_id or ""
     answer = ConversationService(project_id=project_id, org_id=principal.org_id).answer(resolution)
@@ -589,7 +594,14 @@ async def chat_stream(payload: ChatIn, principal: Principal = requires("run:read
         yield frame("chat_started", {"intent": resolution.intent.value})
 
         if resolution.intent.starts_a_run:
-            yield frame("run_suggested", {"mode": resolution.mode.value})
+            yield frame(
+                "run_suggested",
+                {
+                    "mode": resolution.mode.value,
+                    "target_url": resolution.target_url,
+                    "autopilot": resolution.intent is Intent.RUN_AUTOPILOT,
+                },
+            )
             return
 
         answer = ConversationService(

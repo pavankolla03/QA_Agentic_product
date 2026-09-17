@@ -75,6 +75,19 @@ class TestDesignAgent(BaseAgent):
         if requirement is None:
             raise ValueError("test design requires a requirement")
 
+        # An autopilot run has no requirement of its own: the crawl was supposed
+        # to supply one. Reaching here with nothing means the application was
+        # never successfully read, and designing tests from an empty requirement
+        # would mean inventing every one of them against a site we never saw.
+        # Failing here is what stops that becoming a green run full of fiction.
+        if ctx.metadata.get("autopilot") and not requirement.acceptance_criteria:
+            target = ctx.metadata.get("target_url") or ctx.project.base_url or "the application"
+            raise ValueError(
+                f"nothing testable was discovered at {target}, so there is nothing to design. "
+                "Check that the URL is reachable from this machine and that it serves HTML; "
+                "the exploration warnings above say what was attempted."
+            )
+
         # ---- 0. reuse discovery (deterministic, free) ------------------- #
         # Ask what we already have before paying a reasoning model to invent it.
         reuse = self._discover_reuse(ctx)
