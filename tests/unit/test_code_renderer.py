@@ -766,3 +766,58 @@ def test_the_built_in_parameter_types_are_left_alone() -> None:
         pattern, params = parameterise(text)
         assert pattern == expected
         assert len(params) == 1, "a placeholder still declares an argument"
+
+
+# --------------------------------------------------------------------------- #
+# One definition per expression
+# --------------------------------------------------------------------------- #
+def test_a_step_shared_by_two_scenarios_is_defined_once() -> None:
+    """Cucumber matches by expression across the whole suite.
+
+    Defining "I am on the residents form" twice is an ambiguity error that
+    fails every scenario in the run, not only the two that share the step — and
+    two scenarios opening on the same page is the normal case. A real run wrote
+    it twice and the suite could not execute at all.
+    """
+    steps = [
+        StepPlan(text="I am on the residents form", keyword="Given", page="ResidentsPage", setup=True),
+        StepPlan(text="I submit the form", keyword="When", page="ResidentsPage", call="submitForm()"),
+        StepPlan(text="I am on the residents form", keyword="Given", page="ResidentsPage", setup=True),
+        StepPlan(text="I leave a field empty", keyword="When", page="ResidentsPage", call="clearField()"),
+    ]
+    source = render_steps(steps, ["ResidentsPage"])
+
+    assert source.count("Given('I am on the residents form'") == 1
+    assert "When('I submit the form'" in source
+    assert "When('I leave a field empty'" in source
+
+
+def test_the_duplicate_that_survives_is_the_one_that_does_something() -> None:
+    """Keeping the first would be a coin toss.
+
+    A plan routinely yields the same step twice: once bound to a Page Object
+    method and once as an unresolved placeholder. Taking the placeholder throws
+    away a working binding for nothing.
+    """
+    steps = [
+        StepPlan(text="I submit the form", keyword="When"),
+        StepPlan(text="I submit the form", keyword="When", page="ResidentsPage", call="submitForm()"),
+    ]
+    source = render_steps(steps, ["ResidentsPage"])
+
+    assert source.count("When('I submit the form'") == 1
+    assert "residentsPage.submitForm()" in source
+
+
+def test_steps_differing_only_in_their_argument_are_one_expression() -> None:
+    """`{string}` makes them the same Cucumber expression, whatever the example."""
+    steps = [
+        StepPlan(text='I submit with "name" left empty', keyword="When",
+                 page="ResidentsPage", call="clear(value1)"),
+        StepPlan(text='I submit with "email" left empty', keyword="When",
+                 page="ResidentsPage", call="clear(value1)"),
+    ]
+    source = render_steps(steps, ["ResidentsPage"])
+
+    assert source.count("When('I submit with {string} left empty'") == 1
+

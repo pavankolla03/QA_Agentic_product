@@ -418,6 +418,32 @@ def _resolve_page(step: StepPlan, real_classes: set[str]) -> StepPlan:
     return step
 
 
+def _one_per_expression(steps: list[StepPlan]) -> list[StepPlan]:
+    """Collapse steps that would define the same Cucumber expression.
+
+    Where duplicates disagree, the one that does something wins. Keeping the
+    first would be a coin toss: a plan routinely yields the same step once bound
+    to a Page Object method and once as an unresolved placeholder, and taking
+    the placeholder throws away a working binding for no reason.
+    """
+    chosen: dict[str, StepPlan] = {}
+    order: list[str] = []
+    for step in steps:
+        expression, _ = parameterise(step.text)
+        existing = chosen.get(expression)
+        if existing is None:
+            chosen[expression] = step
+            order.append(expression)
+            continue
+        if not _does_something(existing) and _does_something(step):
+            chosen[expression] = step
+    return [chosen[expression] for expression in order]
+
+
+def _does_something(step: StepPlan) -> bool:
+    return bool(step.setup or step.call)
+
+
 def render_steps(
     steps: list[StepPlan],
     pages: list[str] | list[PagePlan],
@@ -447,6 +473,13 @@ def render_steps(
     # written, which fails the whole file rather than the one mistaken step.
     real_classes = {p if isinstance(p, str) else p.class_name for p in pages} | set(known_members)
     steps = [_resolve_page(step, real_classes) for step in steps]
+
+    # One definition per expression. Cucumber matches a step by its expression
+    # across the whole suite, so defining the same one twice is an ambiguity
+    # error that fails every scenario, not just the two that share the step --
+    # and two scenarios opening with "I am on the residents form" is the normal
+    # case, not an unusual one.
+    steps = _one_per_expression(steps)
 
     # Only what the steps in *this file* actually touch. Importing every page
     # the plan mentioned left `LoginPage` imported and `loginPage` declared in
