@@ -1,23 +1,69 @@
 # The pipeline
 
-Two planes, separated because they want opposite things.
+Two planes, separated because they want opposite things — reached from anywhere.
 
 ```
-                        a message arrives
-                               │
-                      ┌────────┴────────┐
-                      │  intent lookup  │   deterministic, no model
-                      └────────┬────────┘
-                               │
-              ┌────────────────┴────────────────┐
-              ▼                                 ▼
-      CONVERSATION PLANE                   TASK PLANE
-      answers in milliseconds              runs in minutes
-      from the database                    through eleven agents
+  VS Code   Slack   Teams   WhatsApp   voice   CI   API
+     └────────┴───────┴─────────┴────────┴──────┴─────┘
+                            │
+                   ┌────────┴────────┐
+                   │     gateway     │   one CommandEnvelope in,
+                   └────────┬────────┘   one Reply out
+                            │
+                   ┌────────┴────────┐
+                   │  intent lookup  │   deterministic, no model
+                   └────────┬────────┘
+                            │
+           ┌────────────────┴────────────────┐
+           ▼                                 ▼
+   CONVERSATION PLANE                   TASK PLANE
+   answers in milliseconds              runs in minutes
+   from the database                    through eleven agents
 ```
 
 Everything that made the chat feel broken came from running one message through
 the machinery built for the other.
+
+---
+
+## Channels
+
+An adapter does two things: turn what arrived into a `CommandEnvelope`, and turn
+the `Reply` back into what that channel renders. It never decides what a message
+means.
+
+That line matters more than it looks. Six channels with six approximations of
+"is this a greeting or a request to automate an application?" agree in week one
+and disagree by week four, and the disagreements get found by whoever's run did
+not start.
+
+| channel | arrives as | reply shaped as |
+|---|---|---|
+| VS Code | the chat panel's own SSE stream | streamed tokens |
+| Slack | Events API JSON, or a form-encoded slash command | `blocks` plus a text fallback |
+| Teams | a Bot Framework activity | a message activity |
+| WhatsApp | Cloud API nesting, or a Twilio form | one text body |
+| voice | a transcript and a call id | one spoken sentence |
+| CI | an instruction, a commit, a branch | `{ok, run_id, error}` |
+| API | the envelope's own fields | the reply's own fields |
+
+Three rules the gateway does not bend:
+
+* **Sessions are keyed by channel *and* conversation.** A Slack thread id and a
+  WhatsApp chat id can be the same string, and a collision would hand one person
+  another person's project. Two threads about two services are two contexts.
+* **An unbound conversation is asked, not defaulted.** With several projects
+  registered and none named, picking the most recent would write files into a
+  repository nobody mentioned, and the person would find out from the diff. With
+  exactly one project the question is only friction, so it is not asked.
+* **Webhooks authenticate like everything else.** A Slack body names a Slack
+  user; it does not say whether that person may start a run, and the payload is
+  precisely where an attacker has full control.
+
+Only voice is rewritten for its channel, and only structurally: a phone call has
+no scrollback, so a run id or a file path read aloud is noise nobody can
+re-read. Typed channels get the text as written — truncating prose to fit a
+notification cuts off the important half.
 
 ---
 
@@ -134,6 +180,77 @@ another needs.
 A run does not report finished work while any step is blocked. The report leads
 with the block, because it used to lead with the count of files written — which
 is how a run with three unbound steps read as a success.
+
+---
+
+## What a finished run calls itself
+
+`status` is the one word everything downstream reads: the dashboard colours it,
+CI gates on it, the chat answers "did it work?" from it. None of them open the
+report, so it has to be the honest word.
+
+| status | means |
+|---|---|
+| `succeeded` | there is automation here that was verified |
+| `blocked` | the platform worked and produced nothing it can vouch for |
+| `failed` | the platform itself broke |
+
+A suite that ran and reported genuine failures is `succeeded`. Going red for a
+real defect is the job, not a malfunction.
+
+A run is `blocked` when execution could not run, when steps have nothing behind
+them, when the code does not compile, or when the runner exited cleanly having
+executed no test at all — that last one nothing else catches, because there are
+no failures to count.
+
+The rule used to be "succeeded if a report was written, else failed", which made
+producing a report the definition of success. A real run against the demo
+application was recorded as `succeeded` with four compile errors, eight unbound
+steps, zero tests executed, and a report headlined AUTOMATION_BLOCKED. Writing a
+document about not finishing is not finishing.
+
+---
+
+## Automating from a URL alone
+
+Give the platform a URL and nothing else, and the application becomes the
+specification.
+
+```
+"https://shop.example.com"
+          │
+          ▼
+  requirement          writes NO acceptance criteria  ← the whole design
+          │                                              rests on this
+          ▼
+  exploration          crawls up to 30 pages, then names what it can see
+          │
+          ▼
+  test_design          refuses outright if exploration found nothing
+```
+
+The requirement stage produces an empty requirement on purpose. A model asked
+"what should I test at this URL?" answers confidently and completely wrongly:
+forty plausible scenarios for a site it has never loaded, each bound to a
+locator that does not exist, and every later stage treats that as ground truth.
+
+So the criteria come from the crawl, and only from what the crawl is evidence
+for:
+
+| seen | claimed |
+|---|---|
+| a form containing a password field | a sign-in, with a wrong-password path |
+| a field marked required | a rejection path for that field |
+| rows counted on the page | "shows at least one row" |
+| no rows | nothing — rather than a test that fails on clean data |
+| a validation message | *evidence in the rationale*, never an assertion |
+
+That last row is the discipline in miniature. The message was seen; what
+triggers it was not, and a "then" without its "when" is an invention.
+
+When the crawl finds nothing, nothing is written and `test_design` fails naming
+the URL. A failed run naming the URL is the honest outcome; a green run full of
+fiction is not.
 
 ---
 

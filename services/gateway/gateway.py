@@ -117,6 +117,19 @@ class Gateway:
             log.warning("gateway could not create a run", exc_info=True)
             return Reply(error="run rejected", text=f"I could not start that: {exc}")
 
+        # Creating a run only writes the row. Without this it sits in `queued`
+        # forever while the reply says "starting" — a claim about work that is
+        # not happening, which is the one thing this platform must never make.
+        try:
+            await self.engine.start(run_id)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("gateway created run %s but could not start it", run_id, exc_info=True)
+            return Reply(
+                error="not started",
+                run_id=run_id,
+                text=f"I created run {run_id} but could not start it: {exc}",
+            )
+
         self.sessions.remember_run(session.key, run_id)
         return Reply(
             kind="run",

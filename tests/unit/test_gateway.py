@@ -41,11 +41,15 @@ from services.gateway.sessions import Session
 class _Engine:
     def __init__(self, answer: str = "") -> None:
         self.requests: list[Any] = []
+        self.started: list[str] = []
         self._answer = answer
 
     def create_run(self, request: Any, user_id: str = "", org_id: str = "") -> str:
         self.requests.append(request)
         return "run_abc123"
+
+    async def start(self, run_id: str) -> None:
+        self.started.append(run_id)
 
     async def answer(self, text: str, context: str = "") -> str:
         return self._answer
@@ -291,3 +295,39 @@ def test_ci_gets_something_to_branch_on() -> None:
 
 def test_voice_always_has_something_to_say() -> None:
     assert to_voice(Reply(text=""))["speech"]
+
+
+# --------------------------------------------------------------------------- #
+# "Starting" has to mean starting
+# --------------------------------------------------------------------------- #
+def test_a_reply_that_says_starting_means_the_run_started() -> None:
+    """Creating a run only writes the row.
+
+    The gateway said "Run X is starting" and never called `start`, so a run
+    kicked off from Slack sat in `queued` indefinitely while the person who
+    asked for it believed it was underway. A claim about work that is not
+    happening is the one thing this platform must never make — and the first
+    version of this test could not catch it, because the engine double had no
+    `start` to leave uncalled.
+    """
+    reply, engine = _send("https://shop.example.com")
+
+    assert reply.kind == "run"
+    assert engine.started == ["run_abc123"]
+
+
+def test_a_run_that_could_not_be_started_says_so() -> None:
+    """Half-done is reported as half-done, with the id, so it can be resumed."""
+
+    class _WontStart(_Engine):
+        async def start(self, run_id: str) -> None:
+            raise RuntimeError("the queue is unreachable")
+
+    envelope = CommandEnvelope(channel=Channel.SLACK, text="https://shop.test", conversation_id="C1")
+    reply = asyncio.run(Gateway(_WontStart(), sessions=_Sessions()).handle(envelope))
+
+    assert not reply.ok
+    assert reply.error == "not started"
+    assert reply.run_id == "run_abc123"
+    assert "queue is unreachable" in reply.text
+
