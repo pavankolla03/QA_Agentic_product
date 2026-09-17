@@ -208,11 +208,30 @@ async def health_ready() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         checks["database"] = f"unavailable: {str(exc)[:120]}"
 
-    ready = all(value == "ok" for value in checks.values())
+    # The queue is reported but never makes this endpoint fail. An in-process
+    # queue is a perfectly serviceable deployment — it is the default — and a
+    # readiness probe that rejects it would refuse traffic to a working
+    # install. What matters is that nobody has to guess which one they have.
+    try:
+        queue = await _engine().queue()
+        health = await queue.health()
+        checks["queue"] = health.summary()
+        durable = health.durable and health.reachable
+    except Exception as exc:  # noqa: BLE001
+        checks["queue"] = f"unavailable: {str(exc)[:120]}"
+        durable = False
+
+    ready = checks.get("database") == "ok"
     return JSONResponse(
-        {"status": "ready" if ready else "not_ready", "checks": checks},
+        {
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+            "durable_runs": durable,
+        },
         status_code=200 if ready else 503,
     )
+
+
 
 
 @api.get("/health/providers", tags=["system"])

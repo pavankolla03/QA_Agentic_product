@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-
 import pytest
 
 from packages.aiqa_types.enums import RunMode, RunStatus
@@ -568,9 +566,11 @@ async def test_a_background_run_that_dies_is_marked_failed(engine, project, org_
 
     monkeypatch.setattr(engine, "execute", boom)
 
-    task = await engine.start(run_id)
-    with contextlib.suppress(RuntimeError):
-        await task
+    # `start` returns a job id now, not a task: the work may not be in this
+    # process at all. `wait` is the only honest way to block on it, and it says
+    # so — it returns immediately for a durable backend.
+    await engine.start(run_id)
+    await engine.wait(run_id)
 
     with session_scope() as session:
         row = session.get(RunRow, run_id)

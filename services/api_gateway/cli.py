@@ -69,6 +69,46 @@ def _already_serving(host: str, port: int) -> bool:
         return False
 
 
+
+@app.command()
+def worker(
+    concurrency: int = typer.Option(1, help="Runs this worker executes at once"),
+) -> None:
+    """Execute queued runs. Run one or more of these beside `serve`.
+
+    Without a worker the API executes runs itself, which works and is the
+    default — but a run then dies with the API process and competes with chat
+    for the same event loop.
+    """
+    from configs.settings import get_settings
+
+    settings = get_settings()
+    url = getattr(settings, "redis_url", "")
+    if not url:
+        console.print(
+            "[yellow]AIQA_REDIS_URL is not set.[/yellow]\n"
+            "A worker reads from a queue; without one there is nothing to read.\n"
+            "Either set it, or run only `aiqa serve` and the API will execute runs itself."
+        )
+        raise typer.Exit(code=1)
+
+    from arq import run_worker
+
+    from services.worker.main import WorkerSettings
+
+    WorkerSettings.max_jobs = max(1, concurrency)
+    console.print(
+        Panel.fit(
+            f"[bold]AI QA worker[/bold]\n"
+            f"queue         {url}\n"
+            f"runs at once  {WorkerSettings.max_jobs}\n"
+            f"db            {settings.database_url.split('://')[0]}",
+            border_style="cyan",
+        )
+    )
+    run_worker(WorkerSettings)  # type: ignore[arg-type]
+
+
 @app.command()
 def serve(
     host: str = typer.Option("", help="Bind address (defaults to AIQA_HOST)"),

@@ -19,7 +19,7 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     environment:
       AIQA_ENV: production
       AIQA_HOST: 0.0.0.0
@@ -57,11 +57,60 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health',timeout=4).status==200 else 1)"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health/live',timeout=4).status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 25s
+
+  # Runs execute here, not in the control plane.
+  #
+  # Two things follow. A run survives the API restarting, because the API only
+  # ever wrote it to a queue. And the API's event loop stops competing with
+  # code generation for CPU — which is what made a chat message typed during a
+  # run wait behind it.
+  #
+  # Scale by raising `replicas`, never by giving one worker more concurrency: a
+  # run drives a browser and a compiler against one working tree, and two runs
+  # sharing that tree would interleave writes into a diff belonging to neither.
+  worker:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile
+    image: aiqa/control-plane:0.1.0
+    command: ["python", "-m", "services.api_gateway.cli", "worker"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      AIQA_ENV: production
+      AIQA_DATABASE_URL: postgresql+psycopg://aiqa:${POSTGRES_PASSWORD:-aiqa}@postgres:5432/aiqa
+      AIQA_REDIS_URL: redis://redis:6379/0
+      AIQA_SECRET_KEY: ${AIQA_SECRET_KEY:?set AIQA_SECRET_KEY in .env}
+      AIQA_DEFAULT_PROVIDER: ${AIQA_DEFAULT_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AIQA_DAILY_COST_LIMIT_USD: ${AIQA_DAILY_COST_LIMIT_USD:-25}
+      AIQA_MONTHLY_COST_LIMIT_USD: ${AIQA_MONTHLY_COST_LIMIT_USD:-500}
+      AIQA_PER_RUN_COST_LIMIT_USD: ${AIQA_PER_RUN_COST_LIMIT_USD:-2}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      TEAMS_WEBHOOK_URL: ${TEAMS_WEBHOOK_URL:-}
+    volumes:
+      # The same repositories the control plane sees. A worker that cannot read
+      # the project it is generating tests for has nothing to do.
+      - ${WORKSPACES_DIR:-./workspaces}:/workspaces
+      - artifacts:/app/artifacts
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: ${AIQA_WORKERS:-1}
 
   postgres:
     image: postgres:16-alpine
@@ -89,6 +138,14 @@ services:
       - redisdata:/data
     expose:
       - "6379"
+    # The control plane falls back to executing runs in-process when Redis is
+    # unreachable, and says so. Starting it before Redis answers would produce
+    # a deployment that is quietly not the durable one that was asked for.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   # Local, free, private inference. Nothing leaves the machine.
   ollama:

@@ -50,6 +50,7 @@ from services.model_router.router import BudgetExceeded, ModelRouter, RunBudget
 from services.observability.db import session_scope
 from services.observability.models import ApprovalRow, ProjectRow, RunRow
 from services.observability.tracker import CostGovernor, RunTracker
+from services.task_service.queue import InProcessQueue, TaskQueue, build_queue
 from tools import ToolContext, build_registry
 
 log = logging.getLogger("aiqa.engine")
@@ -89,9 +90,10 @@ class AgentEngine:
         self.offline = offline
         #: run_id -> listeners, for live WebSocket streaming
         self._listeners: dict[str, list[EventSink]] = {}
-        self._running: dict[str, asyncio.Task[Any]] = {}
         #: Built once, on the first chat message, and kept. See `chat_router`.
         self._chat_router: ModelRouter | None = None
+        #: Built once, on the first run. See `queue`.
+        self._queue: TaskQueue | None = None
 
     # ------------------------------------------------------------------ #
     # Subscriptions
@@ -280,15 +282,56 @@ class AgentEngine:
 
         return result
 
-    async def start(self, run_id: str) -> asyncio.Task[GraphResult]:
-        """Fire-and-forget execution so the HTTP request returns immediately."""
-        existing = self._running.get(run_id)
-        if existing and not existing.done():
-            return existing
-        task = asyncio.create_task(self.execute(run_id))
-        self._running[run_id] = task
-        task.add_done_callback(self._on_task_done(run_id))
-        return task
+    async def queue(self) -> TaskQueue:
+        """The queue this process hands runs to, built once.
+
+        In-process unless a reachable Redis is configured. The decision is made
+        here rather than at import time because "is Redis reachable" is a
+        question about right now, and a configured-but-down Redis must not
+        silently swallow runs.
+        """
+        if self._queue is None:
+            settings = get_settings()
+            self._queue = await build_queue(self.execute, url=getattr(settings, "redis_url", ""))
+            if isinstance(self._queue, InProcessQueue):
+                self._queue.set_completion_handler(self._task_finished)
+            health = await self._queue.health()
+            log.info("task queue ready — %s", health.summary())
+        return self._queue
+
+    async def start(self, run_id: str) -> str:
+        """Submit a run for execution and return immediately.
+
+        The return value used to be the asyncio Task, which made every caller
+        quietly dependent on the run happening in this process. It is a job id
+        now, which is all a caller can meaningfully hold when the work may be
+        picked up by a different machine.
+        """
+        return await (await self.queue()).enqueue(run_id)
+
+    async def wait(self, run_id: str) -> None:
+        """Block until a run finishes, when that is possible at all.
+
+        Only the in-process backend can be awaited: a run executing on another
+        machine has no object here to wait on, and pretending otherwise would
+        return instantly while looking like it waited. Callers that need to
+        know a durable run has finished poll its row, which is the same thing
+        every other client does.
+        """
+        queue = await self.queue()
+        if not isinstance(queue, InProcessQueue):
+            return
+        task = queue.task_for(run_id)
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def request_cancel(self, run_id: str) -> bool:
+        """Stop a run, wherever it is executing."""
+        return await (await self.queue()).cancel(run_id)
+
+    def _task_finished(self, run_id: str, task: asyncio.Task[Any]) -> None:
+        """In-process completion: surface a crash the same way the queue would."""
+        self._on_task_done(run_id)(task)
 
     def _on_task_done(self, run_id: str) -> Callable[[asyncio.Task[GraphResult]], None]:
         """Make sure a crashed background task is visible.
@@ -301,7 +344,6 @@ class AgentEngine:
         """
 
         def done(task: asyncio.Task[GraphResult]) -> None:
-            self._running.pop(run_id, None)
             if task.cancelled():
                 self._mark_failed(run_id, "run was cancelled before it finished")
                 return
@@ -456,9 +498,18 @@ class AgentEngine:
             row.status = RunStatus.CANCELLED.value
             row.ended_at = _utcnow()
             row.error = row.error or "cancelled by user"
-        task = self._running.get(run_id)
-        if task and not task.done():
-            task.cancel()
+
+        # The row is the cancellation signal and it is written first, on
+        # purpose. A worker in another process cannot be reached by
+        # `task.cancel()`, but it does check this status between stages — so a
+        # cancel issued from any channel, against any backend, is seen. Asking
+        # the queue as well is what makes an in-process run stop *now* rather
+        # than at the next stage boundary.
+        queue = self._queue
+        if isinstance(queue, InProcessQueue):
+            task = queue.task_for(run_id)
+            if task and not task.done():
+                task.cancel()
         RunTracker(run_id, listeners=self._sinks(run_id)).audit(
             AuditAction.RUN_CANCEL, run_id, "allowed", "", user_id=user_id
         )

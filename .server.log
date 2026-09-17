@@ -5,28 +5,7 @@
 │ Dashboard http://127.0.0.1:8099/                                        │
 │ env=development  db=sqlite  providers=mock, hashing, ollama, openrouter │
 └─────────────────────────────────────────────────────────────────────────┘
-INFO:     127.0.0.1:59937 - "GET /api/health/live HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59938 - "POST /api/runs HTTP/1.1" 201 Created
-INFO:     127.0.0.1:59944 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54858 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50609 - "GET /api/runs/run_f21cf588a98b47e5/events HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50613 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50616 - "GET /api/runs/run_f21cf588a98b47e5/events HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50618 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50634 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:53613 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58193 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:50202 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52609 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56875 - "GET /api/runs/run_f21cf588a98b47e5/events HTTP/1.1" 200 OK
-INFO:     127.0.0.1:58356 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62482 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62773 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:56314 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61658 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54783 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61741 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54701 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:62705 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:63162 - "GET /api/runs/run_f21cf588a98b47e5 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61604 - "GET /api/runs/run_f21cf588a98b47e5/events HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49688 - "GET /api/health/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49689 - "GET /api/health/ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49690 - "POST /api/runs HTTP/1.1" 201 Created
+INFO:     127.0.0.1:51723 - "GET /api/runs/run_74146f5dbdbe4166 HTTP/1.1" 200 OK

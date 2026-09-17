@@ -13,3 +13,9 @@ rich>=13.7
 typer>=0.12
 pytest>=8.0
 pytest-asyncio>=0.23
+
+# Durable task queue. Optional at runtime: with no AIQA_REDIS_URL the platform
+# executes runs in-process and never imports this. Declared so a deployment
+# that does want durable runs is one `pip install -r` away rather than a
+# surprise ImportError in a worker.
+arq>=0.26
