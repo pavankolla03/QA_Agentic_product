@@ -179,12 +179,27 @@ class ExploreAppTool(Tool):
             return ToolResult.failure("no base_url configured for this project — set it to enable exploration")
 
         toolchain = probe_toolchain(self.ctx.project_root)
+        why_not_browser = ""
         if toolchain["node"] and toolchain["playwright_installed"]:
             result = self._explore_with_playwright(base_url, paths or ["/"], max_pages, timeout, screenshots)
             if result.ok:
                 return result
-            # Fall through to the HTTP probe when the browser run fails.
-        return self._explore_with_http(base_url, paths or ["/"], max_pages)
+            why_not_browser = result.error or "the browser run failed without saying why"
+        elif not toolchain["node"]:
+            why_not_browser = "node is not on PATH"
+        else:
+            why_not_browser = "Playwright is not installed in this project (run `npm install`)"
+
+        # Why the browser path was not used has to travel with the result. This
+        # used to be dropped on the floor, so a run degraded from verified
+        # locators to static HTML and the only trace was a `simulated` flag
+        # nobody could explain. "Unverified" is useful; "unverified and nobody
+        # knows why" is just an outage with extra steps.
+        fallback = self._explore_with_http(base_url, paths or ["/"], max_pages)
+        if fallback.ok and isinstance(fallback.data, dict):
+            fallback.data.setdefault("errors", [])
+            fallback.data["errors"].insert(0, f"no browser crawl: {why_not_browser[:300]}")
+        return fallback
 
     # -- real browser --------------------------------------------------- #
     def _explore_with_playwright(
@@ -238,13 +253,22 @@ class ExploreAppTool(Tool):
             )
             for snap in data.get("snapshots", [])
         ]
+        # `simulated` comes from the script, never from here. The script has its
+        # own last-resort static fallback: when no browser will start at all it
+        # reads the HTML, sets `simulated: true` and says `http (no browser)`.
+        # This used to hardcode False over that — so a crawl the script had
+        # explicitly labelled unverified was handed on as a verified browser
+        # crawl, and every locator taken from it was trusted for code
+        # generation. Reporting *someone else's* honesty as certainty is the
+        # worst version of this bug, because the truth was right there.
         return ToolResult.success(
             {
                 "base_url": base_url,
                 "snapshots": [s.model_dump(mode="json") for s in snapshots],
                 "unreachable": data.get("unreachable", []),
                 "errors": data.get("errors", []),
-                "simulated": False,
+                "simulated": bool(data.get("simulated", False)),
+                "browser": str(data.get("browser") or ""),
             },
             pages=len(snapshots),
             elements=sum(len(s.elements) for s in snapshots),
