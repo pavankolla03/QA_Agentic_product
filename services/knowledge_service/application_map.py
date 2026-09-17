@@ -35,7 +35,19 @@ from urllib.parse import urlparse
 
 log = logging.getLogger("aiqa.appmap")
 
-MAP_VERSION = 1
+#: Bumped to 2 to discard every map written before the crawler stopped
+#: mislabelling itself.
+#:
+#: The explore tool used to hardcode `simulated: False` over the browser
+#: script's own honest `simulated: true`, so pages captured over plain HTTP were
+#: persisted as browser-verified. Those entries are not merely stale, they are
+#: wrong in the one direction that matters: `needs_exploration` re-crawls a
+#: simulated page as soon as a browser is available, and a page lying about
+#: having been rendered will never be re-crawled at all. Its unverified
+#: locators would be trusted for code generation forever.
+#:
+#: A map is a cache, so throwing it away costs one crawl and nothing else.
+MAP_VERSION = 2
 MAP_RELATIVE_PATH = Path(".aiqa") / "application_map.json"
 
 #: A page is re-explored once its knowledge is older than this.
