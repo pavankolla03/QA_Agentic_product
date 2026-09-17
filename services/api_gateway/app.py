@@ -53,6 +53,7 @@ from services.api_gateway.auth import (
     requires,
     revoke_api_key,
 )
+from services.api_gateway.channels import channels
 from services.api_gateway.schemas import (
     ApiKeyCreate,
     ApprovalDecision,
@@ -1400,6 +1401,10 @@ async def project_explore(
 
 
 app.include_router(api)
+# Every other surface — Slack, Teams, WhatsApp, voice, CI — reaches the same
+# gateway through here. They deliberately share one understanding of what a
+# message means; see services/gateway/gateway.py.
+app.include_router(channels)
 
 
 # =========================================================================== #

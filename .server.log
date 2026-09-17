@@ -9,3 +9,5 @@ INFO:     127.0.0.1:49688 - "GET /api/health/live HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49689 - "GET /api/health/ready HTTP/1.1" 200 OK
 INFO:     127.0.0.1:49690 - "POST /api/runs HTTP/1.1" 201 Created
 INFO:     127.0.0.1:51723 - "GET /api/runs/run_74146f5dbdbe4166 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54643 - "GET /api/health/live HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54644 - "GET /api/channels HTTP/1.1" 404 Not Found

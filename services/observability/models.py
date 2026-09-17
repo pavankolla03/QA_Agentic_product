@@ -557,10 +557,39 @@ class BudgetLedgerRow(Base, TimestampMixin):
     stopped_by: Mapped[str] = mapped_column(String(32), default="")
 
 
+class ChannelSessionRow(Base, TimestampMixin):
+    """One conversation on one channel, and what it has established.
+
+    Keyed by channel *and* conversation, never by user alone. Two threads about
+    two services are two contexts, and carrying a project binding across them is
+    how a run gets started against the wrong repository — quietly, because
+    nothing about the message looked wrong.
+    """
+
+    __tablename__ = "channel_sessions"
+    __table_args__ = (Index("ix_channel_session_seen", "channel", "last_seen_at"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: "<channel>:<conversation or user>". Channel-scoped because a Slack thread
+    #: id and a WhatsApp chat id can collide, and a collision here would hand
+    #: one person another person's project.
+    key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    channel: Mapped[str] = mapped_column(String(24), index=True)
+    external_user_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    conversation_id: Mapped[str] = mapped_column(String(128), default="")
+    project_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    org_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    #: So "how is it going?" and "stop" resolve without anybody quoting an id.
+    last_run_id: Mapped[str] = mapped_column(String(64), default="")
+    message_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 ALL_TABLES = [
     OrgRow, UserRow, ApiKeyRow, ProjectRow, RunRow, AgentTraceRow, LLMCallRow,
     ToolCallRow, RunEventRow, ApprovalRow, AuditRow, CostDailyRow,
     KnowledgeChunkRow, ArtifactRow, HealHistoryRow, FlakyTestRow,
     KnowledgeItemRow, RepositoryFileRow, ApplicationPageRow, ApplicationComponentRow,
-    LocatorHealthRow, BudgetLedgerRow,
+    LocatorHealthRow, BudgetLedgerRow, ChannelSessionRow,
 ]
