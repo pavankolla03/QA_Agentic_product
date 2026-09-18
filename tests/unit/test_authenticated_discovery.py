@@ -230,9 +230,9 @@ def test_nothing_is_asserted_that_the_crawl_did_not_see() -> None:
         assert invention not in steps, invention
 
 
-def test_every_assertion_names_a_route_or_a_title_that_was_observed() -> None:
+def test_every_assertion_names_a_page_or_a_title_that_was_observed() -> None:
     plan = _plan(LOGIN, NEW_RESIDENT, DASHBOARD)
-    observed = {"/login", "/residents/new", "/dashboard"}
+    pages = {"Sign in", "Add resident", "Dashboard"}
 
     for spec in plan.features:
         for scenario in spec.scenarios:
@@ -240,26 +240,24 @@ def test_every_assertion_names_a_route_or_a_title_that_was_observed() -> None:
                 if step.keyword != "Then":
                     continue
                 text = step.text
-                assert any(route in text for route in observed) or "title is" in text or "row" in text, text
+                assert any(page in text for page in pages) or "title is" in text or "row" in text, text
 
 
-def test_a_data_driven_scenario_has_a_real_examples_table() -> None:
-    """The previous generator emitted `{string}` — a Cucumber *expression*
-    placeholder — into the feature file with no Examples at all, which does not
-    parse as Gherkin."""
+def test_only_real_data_is_quoted() -> None:
+    """Cucumber turns a quoted fragment into a `{string}` parameter.
+
+    Quoting the field name produced `I fill in {string} with {string}` — one
+    step matching every field, bindable to no particular element, and duly
+    reported as blocked. The page and the field belong in the sentence; the
+    value somebody types is the only part that varies.
+    """
     plan = _plan(NEW_RESIDENT)
-    outline = next(
-        scenario
-        for spec in plan.features
-        for scenario in spec.scenarios
-        if scenario.data_driven
-    )
+    steps = _all_steps(plan)
 
-    assert outline.examples == [{"field": "Full name"}, {"field": "Email"}]
-    gherkin = plan.features[0].to_gherkin()
-    assert "<field>" in gherkin
-    assert "{string}" not in gherkin
-    assert "Examples:" in gherkin
+    assert 'When I enter "QA Autopilot" in the Full name field' in steps
+    assert not any('in "Full name"' in step for step in steps)
+    # Each required field gets its own scenario, so each binds to its own field.
+    assert "When I submit the form with the Email field empty" in steps
 
 
 def test_the_sign_in_flow_is_covered_both_ways() -> None:
@@ -278,8 +276,9 @@ def test_actions_use_the_field_names_the_application_showed_us() -> None:
     """
     steps = _all_steps(_plan(NEW_RESIDENT))
 
-    assert 'I fill in "Full name" with "QA Autopilot"' in " | ".join(steps)
-    assert 'I fill in "Email" with "qa.autopilot@example.com"' in " | ".join(steps)
+    joined = " | ".join(steps)
+    assert '"QA Autopilot" in the Full name field' in joined
+    assert '"qa.autopilot@example.com" in the Email field' in joined
 
 
 def test_a_list_with_a_filter_box_is_a_list_not_a_form() -> None:

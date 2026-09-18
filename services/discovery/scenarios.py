@@ -20,10 +20,16 @@ reduced to something the browser can actually check, and it is true or false for
 an honest reason. Actions are bound to elements that were seen, so every step
 has a locator behind it and the step-coverage stage has nothing left to block.
 
-The vocabulary is deliberately tiny and fixed. Six step shapes cover every
-feature kind, which means the step definitions behind them are the same six
-every time — not a fresh set of near-duplicates per run, each with its own way
-of saying "click the button".
+The vocabulary is deliberately tiny and fixed. A handful of step shapes cover
+every feature kind, which means the step definitions behind them are the same
+handful every time — not a fresh set of near-duplicates per run, each with its
+own way of saying "click the button".
+
+**Only real data is quoted.** Cucumber turns a quoted fragment into a `{string}`
+parameter, so quoting the field name produced `I fill in {string} with {string}`
+— one step matching every field, bindable to no particular element, and duly
+reported as blocked. The page and the field belong *in* the sentence; the value
+somebody types is the only part that varies.
 """
 
 from __future__ import annotations
@@ -126,7 +132,7 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
     weakest true statement available, and a true weak assertion beats a
     confident invented one.
     """
-    route = feature.route
+    page = _page_name(feature)
     scenarios = [
         Scenario(
             name="Sign in with valid credentials",
@@ -135,9 +141,9 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
             priority=Priority.P0,
             layer=TestLayer.UI,
             steps=[
-                GherkinStep(keyword="Given", text=f'I am on "{route}"'),
+                GherkinStep(keyword="Given", text=f"I am on the {page} page"),
                 GherkinStep(keyword="When", text="I sign in with valid credentials"),
-                GherkinStep(keyword="Then", text=f'I am no longer on "{route}"'),
+                GherkinStep(keyword="Then", text=f"I am taken away from the {page} page"),
             ],
         ),
         Scenario(
@@ -148,9 +154,9 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
             layer=TestLayer.UI,
             negative=True,
             steps=[
-                GherkinStep(keyword="Given", text=f'I am on "{route}"'),
+                GherkinStep(keyword="Given", text=f"I am on the {page} page"),
                 GherkinStep(keyword="When", text="I sign in with an incorrect password"),
-                GherkinStep(keyword="Then", text=f'I am still on "{route}"'),
+                GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
             ],
         ),
     ]
@@ -160,20 +166,24 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
 
 def _form(feature: DiscoveredFeature) -> list[Scenario]:
     """Fill everything and submit, plus one rejection path per required field."""
+    page = _page_name(feature)
     fillable = [name for name in feature.fields if name]
-    steps: list[GherkinStep] = [GherkinStep(keyword="Given", text=f'I am on "{feature.route}"')]
+    steps: list[GherkinStep] = [GherkinStep(keyword="Given", text=f"I am on the {page} page")]
     for index, field in enumerate(fillable[:8]):
         steps.append(
             GherkinStep(
                 keyword="When" if index == 0 else "And",
-                text=f'I fill in "{field}" with "{_sample(field)}"',
+                # The field is part of the sentence, the value is the parameter.
+                # Quoting the field name would collapse every one of these into
+                # a single step matching all of them and binding to none.
+                text=f'I enter "{_sample(field)}" in the {field} field',
             )
         )
     steps.append(GherkinStep(keyword="And", text="I submit the form"))
     # "Accepted" without having ever submitted during the crawl is not something
     # we know. "We left the page we were on" is the observable consequence, and
     # it is wrong loudly rather than passing quietly.
-    steps.append(GherkinStep(keyword="Then", text=f'I am no longer on "{feature.route}"'))
+    steps.append(GherkinStep(keyword="Then", text=f"I am taken away from the {page} page"))
 
     scenarios = [
         Scenario(
@@ -197,25 +207,25 @@ def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
     *expression* placeholder — into the feature file with no Examples at all,
     which does not parse.
     """
-    required = [name for name in _required_fields(feature)][:4]
+    required = _required_fields(feature)[:3]
     if not required:
         return []
+    page = _page_name(feature)
     return [
         Scenario(
-            name="Reject a submission with a required field left empty",
-            description="Each field the application marks required.",
-            tags=["@negative", "@data-driven", "@P1"],
+            name=f"Reject a submission with {field} left empty",
+            description=f"The application marks {field} required.",
+            tags=["@negative", "@P1"],
             priority=Priority.P1,
             layer=TestLayer.UI,
             negative=True,
-            data_driven=True,
             steps=[
-                GherkinStep(keyword="Given", text=f'I am on "{feature.route}"'),
-                GherkinStep(keyword="When", text='I submit the form with "<field>" left empty'),
-                GherkinStep(keyword="Then", text=f'I am still on "{feature.route}"'),
+                GherkinStep(keyword="Given", text=f"I am on the {page} page"),
+                GherkinStep(keyword="When", text=f"I submit the form with the {field} field empty"),
+                GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
             ],
-            examples=[{"field": name} for name in required],
         )
+        for field in required
     ]
 
 
@@ -228,7 +238,7 @@ def _listing(feature: DiscoveredFeature) -> list[Scenario]:
             priority=Priority.P2,
             layer=TestLayer.UI,
             steps=[
-                GherkinStep(keyword="Given", text=f'I am on "{feature.route}"'),
+                GherkinStep(keyword="Given", text=f"I am on the {_page_name(feature)} page"),
                 GherkinStep(keyword="Then", text="I should see at least one row"),
             ],
         )
@@ -236,27 +246,19 @@ def _listing(feature: DiscoveredFeature) -> list[Scenario]:
 
 
 def _navigation(feature: DiscoveredFeature) -> list[Scenario]:
-    """One outline over the destinations the crawl actually reached."""
-    destinations = [_route_of(text) for text in feature.criteria]
-    destinations = [route for route in destinations if route][:6]
-    if not destinations:
-        return []
-    return [
-        Scenario(
-            name="Every linked page is reachable",
-            description=feature.rationale,
-            tags=["@smoke", "@navigation", "@P2"],
-            priority=Priority.P2,
-            layer=TestLayer.UI,
-            data_driven=True,
-            steps=[
-                GherkinStep(keyword="Given", text='I am on "/"'),
-                GherkinStep(keyword="When", text='I open "<route>"'),
-                GherkinStep(keyword="Then", text='I am on "<route>"'),
-            ],
-            examples=[{"route": route} for route in destinations],
-        )
-    ]
+    """Nothing, deliberately.
+
+    The crawl recorded which routes it reached by following links, but not the
+    link text that got it there — and "I follow the /residents link" is not a
+    sentence anybody writes, nor one a locator can be found for. Meanwhile every
+    destination already has a page-load scenario that opens it directly, so the
+    only thing an invented navigation scenario would add is a step that cannot
+    bind.
+
+    Capturing link text during the crawl would make this worth writing. Until
+    then, writing it would mean guessing.
+    """
+    return []
 
 
 def _search(feature: DiscoveredFeature) -> list[Scenario]:
@@ -269,10 +271,10 @@ def _search(feature: DiscoveredFeature) -> list[Scenario]:
             priority=Priority.P2,
             layer=TestLayer.UI,
             steps=[
-                GherkinStep(keyword="Given", text=f'I am on "{feature.route}"'),
-                GherkinStep(keyword="When", text=f'I fill in "{box}" with "{_DEFAULT_SAMPLE}"'),
+                GherkinStep(keyword="Given", text=f"I am on the {_page_name(feature)} page"),
+                GherkinStep(keyword="When", text=f'I enter "{_DEFAULT_SAMPLE}" in the {box} field'),
                 GherkinStep(keyword="And", text="I submit the form"),
-                GherkinStep(keyword="Then", text=f'I am on "{feature.route}"'),
+                GherkinStep(keyword="Then", text=f"I am still on the {_page_name(feature)} page"),
             ],
         )
     ]
@@ -285,15 +287,17 @@ def _page_load(feature: DiscoveredFeature) -> list[Scenario]:
     two failures that matter for a page with nothing on it: the route stopped
     existing, and the route started serving something else.
     """
+    page = _page_name(feature)
     title = _title_of(feature.criteria)
-    steps = [GherkinStep(keyword="Given", text=f'I am on "{feature.route}"')]
+    steps = [GherkinStep(keyword="Given", text=f"I am on the {page} page")]
     if title:
+        # The title is data read off the page, so it is genuinely a parameter.
         steps.append(GherkinStep(keyword="Then", text=f'the page title is "{title}"'))
     else:
-        steps.append(GherkinStep(keyword="Then", text=f'I am on "{feature.route}"'))
+        steps.append(GherkinStep(keyword="Then", text=f"I am still on the {page} page"))
     return [
         Scenario(
-            name=f"{feature.route} loads",
+            name=f"The {page} page loads",
             description=feature.rationale,
             tags=["@smoke", "@P2"],
             priority=Priority.P2,
@@ -304,6 +308,19 @@ def _page_load(feature: DiscoveredFeature) -> list[Scenario]:
 
 
 # --------------------------------------------------------------------------- #
+def _page_name(feature: DiscoveredFeature) -> str:
+    """What to call this page inside a step sentence.
+
+    The feature name with its kind suffix removed: "Add resident - form
+    submission" is a heading, "Add resident" is how somebody refers to the page
+    in a sentence. Falls back to the route, which always exists.
+    """
+    name = re.split(r"\s+-\s+", feature.name)[0].strip()
+    if name and name.lower() not in ("home", ""):
+        return name
+    return feature.route.strip("/") or "home"
+
+
 _TITLE_RE = re.compile(r'shows the title "([^"]+)"')
 _ROUTE_RE = re.compile(r"^(/\S*)")
 
