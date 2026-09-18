@@ -12,13 +12,15 @@ that started this whole thread.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import select
 
 from packages.aiqa_types.enums import RunStatus
 from services.agent_engine.engine import AgentEngine
 from services.observability.db import session_scope
-from services.observability.models import RunRow
+from services.observability.models import RunEventRow, RunRow
 
 
 @pytest.fixture
@@ -37,7 +39,14 @@ def _project_id(project) -> str:  # noqa: ANN001 - conftest fixture
 PROJECT_ID = ""
 
 
-def _run(run_id: str, status: RunStatus) -> None:
+def _run(run_id: str, status: RunStatus, *, quiet_for: float = 3600.0) -> None:
+    """A run that has said nothing for `quiet_for` seconds.
+
+    Silence is what marks a run dead, so a test about dead runs has to create
+    one that has actually been silent. The default is an hour, comfortably past
+    the grace period; pass a small number for a run that is still working.
+    """
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=quiet_for)
     with session_scope() as session:
         session.add(
             RunRow(
@@ -46,6 +55,8 @@ def _run(run_id: str, status: RunStatus) -> None:
                 instruction="anything",
                 mode="full",
                 status=status.value,
+                created_at=stamp,
+                started_at=stamp,
             )
         )
 
@@ -104,3 +115,66 @@ def teardown_module() -> None:
             select(RunRow).where(RunRow.id.like("run_reconcile_%"))
         ).scalars():
             session.delete(row)
+
+
+# --------------------------------------------------------------------------- #
+# The other direction, which cost a real run
+# --------------------------------------------------------------------------- #
+def test_a_run_that_is_still_working_is_left_alone(engine: AgentEngine) -> None:
+    """Absence of evidence was deciding this, and it decided wrong.
+
+    A second control plane was started while the first was mid-run. It could not
+    bind the port and exited — but it had already run its startup bookkeeping,
+    and the premise "at startup nothing is in flight" is false for a process
+    that is not the only one. It marked a healthy run, by then at the reporting
+    stage, as `failed`.
+
+    Aliveness is now something the run demonstrates. Its own events are the
+    heartbeat, and a run that has spoken recently is working, whoever is driving
+    it.
+    """
+    _run("run_alive", RunStatus.RUNNING, quiet_for=5)
+    with session_scope() as session:
+        session.add(
+            RunEventRow(
+                id="evt_alive",
+                run_id="run_alive",
+                type="agent_started",
+                message="exploration",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+    assert engine.reconcile_interrupted_runs() == 0
+    assert _status("run_alive") == RunStatus.RUNNING.value
+
+
+def test_a_run_queued_moments_ago_is_not_collected(engine: AgentEngine) -> None:
+    """It has emitted nothing because it has not started, not because it died."""
+    _run("run_just_queued", RunStatus.QUEUED, quiet_for=2)
+
+    assert engine.reconcile_interrupted_runs() == 0
+    assert _status("run_just_queued") == RunStatus.QUEUED.value
+
+
+def test_a_long_silence_is_still_collected(engine: AgentEngine) -> None:
+    """The grace period is generous, not infinite.
+
+    Leaving a dead run as `running` until the next restart is the cheap error;
+    leaving it forever is the sidebar showing something that never finishes.
+    """
+    _run("run_silent", RunStatus.RUNNING, quiet_for=7200)
+    with session_scope() as session:
+        session.add(
+            RunEventRow(
+                id="evt_silent",
+                run_id="run_silent",
+                type="agent_started",
+                message="exploration",
+                created_at=datetime.now(timezone.utc) - timedelta(seconds=7200),
+            )
+        )
+
+    assert engine.reconcile_interrupted_runs() >= 1
+    assert _status("run_silent") == RunStatus.FAILED.value
+

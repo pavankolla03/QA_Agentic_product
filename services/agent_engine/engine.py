@@ -14,10 +14,10 @@ import logging
 import os
 import time
 from collections.abc import AsyncIterator, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from agents.base import AgentContext
 from agents.orchestrator.graph import GraphResult, Orchestrator
@@ -48,12 +48,19 @@ from packages.aiqa_types.models import (
 )
 from services.model_router.router import BudgetExceeded, ModelRouter, RunBudget
 from services.observability.db import session_scope
-from services.observability.models import ApprovalRow, ProjectRow, RunRow
+from services.observability.models import ApprovalRow, ProjectRow, RunEventRow, RunRow
 from services.observability.tracker import CostGovernor, RunTracker
 from services.task_service.queue import InProcessQueue, TaskQueue, build_queue
 from tools import ToolContext, build_registry
 
 log = logging.getLogger("aiqa.engine")
+
+#: How quiet a run must be before it is presumed dead.
+#:
+#: Long enough to cover the slowest thing a stage does between events — a model
+#: call on a free tier can take minutes — and short enough that a genuinely dead
+#: run is collected on the next restart rather than lingering for an afternoon.
+_HEARTBEAT_GRACE_SECONDS = 600
 
 EventSink = Callable[[RunEvent], None]
 
@@ -365,9 +372,22 @@ class AgentEngine:
         stream that will never emit, which looks exactly like the product
         hanging.
 
-        This is called once at startup, when by definition no run is in flight,
-        so anything the database still believes is running is a leftover.
+        This used to assume that at startup no run is in flight, so anything the
+        database still called `running` was a leftover. That premise holds for
+        the only process there is, and fails for any other: a second instance
+        that could not even bind the port had already run this, and marked a
+        healthy, nearly-finished run on the first instance as `failed`.
+
+        So aliveness is now something the run has to demonstrate rather than
+        something absence-of-evidence decides. A run in flight emits events
+        continuously — agent starts, tool calls, notes — and the newest one is a
+        heartbeat nobody had to add a column for. A run that has said something
+        recently is working, whoever is driving it.
+
+        The reverse error is cheap: leaving a genuinely dead run as `running`
+        for one grace period, until the next restart collects it.
         """
+        cutoff = _utcnow() - timedelta(seconds=_HEARTBEAT_GRACE_SECONDS)
         stale = 0
         try:
             with session_scope() as session:
@@ -379,6 +399,11 @@ class AgentEngine:
                     ).scalars()
                 )
                 for row in rows:
+                    if self._heartbeat(session, row, cutoff):
+                        log.info(
+                            "run %s is still emitting events — leaving it alone", row.id
+                        )
+                        continue
                     row.status = RunStatus.FAILED.value
                     row.error = "interrupted — the control plane restarted while this run was in flight"
                     row.finished_at = _utcnow()
@@ -390,6 +415,24 @@ class AgentEngine:
             log.warning("marked %d interrupted run(s) as failed", stale)
         return stale
 
+
+    @staticmethod
+    def _heartbeat(session: Any, row: RunRow, cutoff: datetime) -> bool:
+        """Has this run said anything since `cutoff`?
+
+        Its own events are the heartbeat. A queued run has not started and has
+        none, so it is judged on when it was created instead — otherwise a run
+        queued a second before a restart would be collected as dead.
+        """
+        latest = session.execute(
+            select(func.max(RunEventRow.created_at)).where(RunEventRow.run_id == row.id)
+        ).scalar_one_or_none()
+        stamp = latest or row.started_at or row.created_at
+        if stamp is None:
+            return False
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+        return stamp > cutoff
 
     def _mark_failed(self, run_id: str, error: str) -> None:
         """Record a terminal failure for a run that never got to persist one."""

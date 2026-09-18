@@ -58,8 +58,18 @@ def test_a_wildcard_bind_probes_loopback(serving_port: int) -> None:
     assert _already_serving("", serving_port) is True
 
 
-def test_something_that_is_not_us_does_not_count(serving_port: int) -> None:
-    """A port held by another program answers, but not with our health check."""
+def test_a_port_held_by_something_else_still_stops_us(serving_port: int) -> None:
+    """Held is held, whoever is holding it.
+
+    This used to return False so that startup proceeded and the bind failed with
+    the operating system's message. That is a worse outcome than it sounds:
+    startup bookkeeping runs before the bind, and the reconciler's premise —
+    "at startup nothing is in flight" — is false for a second process. One such
+    failed start marked a healthy run on the first instance as `failed`.
+
+    We cannot have the port either way. Refusing early costs a clearer message
+    and nothing else.
+    """
 
     class _Other(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -72,7 +82,36 @@ def test_something_that_is_not_us_does_not_count(serving_port: int) -> None:
     server = HTTPServer(("127.0.0.1", 0), _Other)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        assert _already_serving("127.0.0.1", server.server_address[1]) is False
+        assert _already_serving("127.0.0.1", server.server_address[1]) is True
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_a_free_port_is_free() -> None:
+    """The guard must not refuse to start for no reason."""
+    import socket
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    assert _already_serving("127.0.0.1", free) is False
+
+
+def test_a_busy_server_is_not_mistaken_for_a_free_port() -> None:
+    """The socket decides, not the health endpoint.
+
+    The guard asked `/api/health` — the one endpoint that contacts every model
+    provider — with a two-second timeout. A control plane busy with a run
+    answered late, the probe gave up, and the guard reported the port free.
+    A listener that never answers at all stands in for that here.
+    """
+    import socket
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        assert _already_serving("127.0.0.1", listener.getsockname()[1]) is True
+    finally:
+        listener.close()

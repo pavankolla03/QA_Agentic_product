@@ -52,21 +52,45 @@ def _bootstrap() -> None:
 # =========================================================================== #
 
 def _already_serving(host: str, port: int) -> bool:
-    """Is a healthy control plane already answering here?
+    """Is anything already holding this port?
 
-    Deliberately asks `/api/health` rather than just probing the socket: a port
-    held by something that is not us should still be reported, and the health
-    endpoint is the only way to tell the difference in the message.
+    The socket is the authority, and it is checked first. This used to ask
+    `/api/health` with a two-second timeout — the one endpoint that contacts
+    every model provider, and routinely the slowest thing the server does. A
+    control plane busy with a run answered it late, the probe gave up, the
+    guard reported the port free, and a second instance started.
+
+    That second instance could not bind, but it had already run its startup
+    bookkeeping by then, and the reconciler's premise — "at startup no run is in
+    flight" — is false for a process that is not the only one. It marked the
+    first instance's healthy, nearly-finished run as `failed`. Losing a run to a
+    port probe that timed out is a poor trade for a slightly nicer message.
+
+    A busy server still holds its socket, so this cannot be starved.
     """
+    import socket
     import urllib.error
     import urllib.request
 
     probe = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
     try:
-        with urllib.request.urlopen(f"http://{probe}:{port}/api/health", timeout=2) as response:
-            return 200 <= response.status < 300
-    except (urllib.error.URLError, OSError, ValueError):
+        with socket.create_connection((probe, port), timeout=2):
+            pass
+    except OSError:
         return False
+
+    # Something is there. The health endpoint only decides what to *call* it,
+    # and a slow or missing answer no longer changes the verdict.
+    try:
+        with urllib.request.urlopen(f"http://{probe}:{port}/api/health/live", timeout=5) as response:
+            if 200 <= response.status < 300:
+                return True
+    except (urllib.error.URLError, OSError, ValueError):
+        console.print(
+            f"[yellow]port {port} is held by something that does not answer "
+            "/api/health/live — refusing to start rather than fight it for the socket[/]"
+        )
+    return True
 
 
 
