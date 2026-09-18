@@ -227,6 +227,9 @@ class TestDesignAgent(BaseAgent):
             run_id=ctx.run_id,
             requirement_id=ctx.requirement.id if ctx.requirement else "",
             base_url=ctx.metadata.get("target_url") or ctx.project.base_url or "",
+            # The crawler needed an account to see these pages, so the suite
+            # needs one too, before every scenario.
+            signed_in=bool(ctx.metadata.get("signed_in")),
         )
         summary = describe(plan)
         ctx.note(

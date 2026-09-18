@@ -181,8 +181,12 @@ def _bind_steps(plan: TestPlan, by_page_name: dict[str, PagePlan]) -> list[StepP
     current: PagePlan | None = None
 
     for spec in plan.features:
-        for scenario in spec.scenarios:
-            for step in scenario.steps:
+        # Background first, and on the same footing as any other step: Cucumber
+        # runs it before every scenario, so it needs definitions like the rest.
+        # A Background whose steps are undefined fails every scenario in the
+        # file before the first assertion.
+        for scenario_steps in [spec.background, *(s.steps for s in spec.scenarios)]:
+            for step in scenario_steps:
                 text = step.text
                 on_page = _ON_PAGE_RE.match(text)
                 if on_page:

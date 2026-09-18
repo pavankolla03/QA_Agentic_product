@@ -63,8 +63,6 @@ from agents.code_generation.visual_renderer import (
 from packages.aiqa_types.enums import AgentName, ArtifactKind, Capability, ChangeType
 from packages.aiqa_types.models import CodeBundle, FileChange, TestPlan
 from services.discovery.autopilot import DiscoveredFeature
-from services.discovery.codegen import describe as describe_generation
-from services.discovery.codegen import generation_plan
 from tools.filesystem.fs_tools import make_diff
 
 #: How a file says this platform wrote it, and may rewrite it.
@@ -237,6 +235,12 @@ class CodeGenerationAgent(BaseAgent):
         self, ctx: AgentContext, plan: TestPlan, catalog: list[dict[str, Any]]
     ) -> GenerationPlan | None:
         """Page objects and bindings for a plan the crawl already decided."""
+        # Imported here rather than at module scope: `services.discovery.codegen`
+        # reads the renderer's plan dataclasses, and this package's `__init__`
+        # pulls in this module, so a top-level import closes the loop.
+        from services.discovery.codegen import describe as describe_generation
+        from services.discovery.codegen import generation_plan
+
         if not ctx.metadata.get("autopilot"):
             return None
         raw = ctx.metadata.get("discovered_features") or []

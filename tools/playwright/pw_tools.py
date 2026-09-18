@@ -403,6 +403,7 @@ class RunTestsTool(Tool):
         workers: int = 0,
         retries: int = 0,
         timeout: int = 900,
+        env: dict[str, str] | None = None,
         **_: Any,
     ) -> ToolResult:
         root = Path(self.ctx.project_root)
@@ -423,12 +424,14 @@ class RunTestsTool(Tool):
         from services.knowledge_service.indexer import _bdd_runner
 
         if _bdd_runner(root) == "cucumber-js":
-            return self._run_cucumber(root, tags, timeout)
+            return self._run_cucumber(root, tags, timeout, env)
 
-        return self._run_playwright(root, test_filter, tags, workers, retries, timeout)
+        return self._run_playwright(root, test_filter, tags, workers, retries, timeout, env)
 
     # ------------------------------------------------------------------ #
-    def _run_cucumber(self, root: Path, tags: list[str] | None, timeout: int) -> ToolResult:
+    def _run_cucumber(
+        self, root: Path, tags: list[str] | None, timeout: int, env: dict[str, str] | None = None
+    ) -> ToolResult:
         report_path = root / ".aiqa" / "cucumber.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         if report_path.exists():
@@ -444,7 +447,12 @@ class RunTestsTool(Tool):
         if tags:
             command += ["--tags", " or ".join(tags)]
 
-        result = RunCommandTool(self.ctx).run(command=command, cwd=".", timeout=timeout)
+        # The suite signs itself in, so it needs the same account the crawler
+        # used. `sanitized_env` strips anything that looks like a password by
+        # default — correctly — so it has to be handed back deliberately here.
+        result = RunCommandTool(self.ctx).run(
+            command=command, cwd=".", timeout=timeout, env=env or None
+        )
         payload = result.data if isinstance(result.data, dict) else {}
         stdout = payload.get("stdout", "")
         stderr = payload.get("stderr", "")
@@ -489,7 +497,7 @@ class RunTestsTool(Tool):
     # ------------------------------------------------------------------ #
     def _run_playwright(
         self, root: Path, test_filter: str, tags: list[str] | None,
-        workers: int, retries: int, timeout: int,
+        workers: int, retries: int, timeout: int, env: dict[str, str] | None = None,
     ) -> ToolResult:
 
         report_path = root / ".aiqa" / "results.json"
@@ -512,7 +520,7 @@ class RunTestsTool(Tool):
             command=command,
             cwd=".",
             timeout=timeout,
-            env={"PLAYWRIGHT_JSON_OUTPUT_NAME": str(report_path)},
+            env={"PLAYWRIGHT_JSON_OUTPUT_NAME": str(report_path), **(env or {})},
         )
         payload = result.data if isinstance(result.data, dict) else {}
         stdout = payload.get("stdout", "")

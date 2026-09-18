@@ -70,8 +70,18 @@ def plan_from_features(
     run_id: str = "",
     requirement_id: str = "",
     base_url: str = "",
+    signed_in: bool = False,
 ) -> TestPlan:
-    """A complete, bindable test plan built only from observed evidence."""
+    """A complete, bindable test plan built only from observed evidence.
+
+    `signed_in` says the crawler had to authenticate to see these pages, which
+    means every test of them has to authenticate too. Leaving that out produced
+    a suite that navigated straight to /residents/new, was redirected to the
+    login page, and spent thirty seconds per scenario looking for a field that
+    was not there — nine timeouts that all said `locator.fill` and none of which
+    were about locators.
+    """
+    sign_in_page = _sign_in_page(features) if signed_in else ""
     specs: list[FeatureSpec] = []
     counter = 0
 
@@ -89,6 +99,7 @@ def plan_from_features(
                 file_name=f"{_slug(feature.name)}.feature",
                 description=feature.rationale,
                 tags=[f"@{feature.kind.replace('_', '-')}"],
+                background=_sign_in_background(feature, sign_in_page),
                 scenarios=scenarios,
             )
         )
@@ -107,6 +118,29 @@ def plan_from_features(
 
 
 # --------------------------------------------------------------------------- #
+def _sign_in_page(features: list[DiscoveredFeature]) -> str:
+    """The page the suite has to go through before anything else works."""
+    for feature in features:
+        if feature.kind == KIND_AUTH:
+            return _page_name(feature)
+    return ""
+
+
+def _sign_in_background(feature: DiscoveredFeature, sign_in_page: str) -> list[GherkinStep]:
+    """Sign in before every scenario on a page that is behind the login.
+
+    Not on the sign-in feature itself, which is *about* signing in: a Background
+    that signs in before testing sign-in would leave those scenarios starting
+    from the dashboard, testing nothing.
+    """
+    if not sign_in_page or feature.kind == KIND_AUTH:
+        return []
+    return [
+        GherkinStep(keyword="Given", text=f"I am on the {sign_in_page} page"),
+        GherkinStep(keyword="And", text="I sign in with valid credentials"),
+    ]
+
+
 def _scenarios_for(feature: DiscoveredFeature) -> list[Scenario]:
     if feature.kind == KIND_AUTH:
         return _auth(feature)

@@ -24,6 +24,7 @@ from packages.aiqa_types.enums import (
     TestStatus,
 )
 from packages.aiqa_types.models import ExecutionResult
+from services.discovery.credentials import load as load_credentials
 
 
 class ExecutionAgent(BaseAgent):
@@ -38,6 +39,27 @@ class ExecutionAgent(BaseAgent):
         if ctx.mode == RunMode.PLAN_ONLY:
             return "mode=plan_only — nothing to apply or execute"
         return ""
+
+    @staticmethod
+    def _app_env(ctx: AgentContext) -> dict[str, str]:
+        """The account the suite signs itself in with.
+
+        A generated suite reads these rather than carrying a password in a
+        committed file, which means the runner has to be given them — and
+        `sanitized_env` strips anything that looks like a secret by default,
+        correctly, so they have to be handed back deliberately.
+
+        Without them `signIn()` fills two empty strings, the application stays
+        on the login page, and every scenario behind the login times out
+        looking for a field that is not there.
+        """
+        credentials = ctx.credentials or load_credentials(ctx.project_root)
+        if credentials is None or not credentials.usable:
+            return {}
+        return {
+            "AIQA_APP_USERNAME": credentials.username,
+            "AIQA_APP_PASSWORD": credentials.password,
+        }
 
     async def run(self, ctx: AgentContext) -> None:
         # --- 1. Write the approved bundle ------------------------------- #
@@ -58,6 +80,7 @@ class ExecutionAgent(BaseAgent):
             test_filter=filter_expr, tags=tags,
             retries=ctx.metadata.get("retries", 0),
             timeout=ctx.metadata.get("test_timeout", 900),
+            env=self._app_env(ctx),
         )
 
         if not result.ok:

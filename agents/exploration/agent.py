@@ -204,6 +204,9 @@ class ExplorationAgent(BaseAgent):
             )
             ctx.metadata["sign_in_failed"] = detail[:300]
         elif data.get("signed_in"):
+            # Recorded so the plan knows every page it is about sits behind a
+            # login, and puts a sign-in in the Background of each feature.
+            ctx.metadata["signed_in"] = True
             ctx.note(f"signed in as {ctx.credentials.username}; crawling the application behind it")
         if browser:
             ctx.note(f"explored with {browser}")

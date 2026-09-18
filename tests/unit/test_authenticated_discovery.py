@@ -184,6 +184,10 @@ LOGIN = {
          "confidence": 0.98, "required": True},
         {"name": "Password", "role": "textbox", "locator": "getByTestId('p')",
          "confidence": 0.98, "required": True, "input_type": "password"},
+        # Every real form has a control that submits it, and without one there
+        # is no `submitForm` to bind "I submit the form" to.
+        {"name": "Sign in", "role": "button", "locator": "getByTestId('login-submit')",
+         "confidence": 0.98},
     ],
 }
 NEW_RESIDENT = {
@@ -196,6 +200,8 @@ NEW_RESIDENT = {
         {"name": "Email", "role": "textbox", "locator": "getByTestId('e')",
          "confidence": 0.98, "required": True},
         {"name": "Notes", "role": "textbox", "locator": "getByTestId('no')", "confidence": 0.98},
+        {"name": "Create resident", "role": "button", "locator": "getByTestId('r-submit')",
+         "confidence": 0.98},
     ],
 }
 DASHBOARD = {"route": "/dashboard", "title": "Dashboard - Acme", "elements": []}
@@ -356,3 +362,99 @@ def test_the_plan_says_where_it_came_from() -> None:
     assert derive_features(
         ApplicationMap(base_url="http://app.test", pages={"/login": LOGIN})
     )[0].kind == KIND_AUTH
+
+
+# --------------------------------------------------------------------------- #
+# The suite has to sign in too
+# --------------------------------------------------------------------------- #
+def test_pages_behind_a_login_sign_in_before_every_scenario() -> None:
+    """The crawler authenticated; the generated tests did not.
+
+    So the suite navigated straight to /residents/new, was redirected to the
+    login page, and spent thirty seconds per scenario looking for a field that
+    was not there — nine timeouts that all read `locator.fill` and none of which
+    were about locators.
+    """
+    plan = plan_from_features(
+        derive_features(
+            ApplicationMap(base_url="http://app.test",
+                           pages={p["route"]: p for p in (LOGIN, NEW_RESIDENT)})
+        ),
+        base_url="http://app.test",
+        signed_in=True,
+    )
+    form = next(spec for spec in plan.features if "Add resident" in spec.name)
+
+    assert [step.text for step in form.background] == [
+        "I am on the Sign in page",
+        "I sign in with valid credentials",
+    ]
+
+
+def test_the_sign_in_feature_does_not_sign_in_first() -> None:
+    """A Background that signs in before testing sign-in leaves those scenarios
+    starting from the dashboard, testing nothing."""
+    plan = plan_from_features(
+        derive_features(ApplicationMap(base_url="http://app.test", pages={"/login": LOGIN})),
+        base_url="http://app.test",
+        signed_in=True,
+    )
+    assert plan.features[0].background == []
+
+
+def test_an_application_with_no_login_gets_no_background() -> None:
+    plan = plan_from_features(
+        derive_features(ApplicationMap(base_url="http://app.test",
+                                       pages={"/residents/new": NEW_RESIDENT})),
+        base_url="http://app.test",
+        signed_in=False,
+    )
+    assert all(spec.background == [] for spec in plan.features)
+
+
+def test_every_step_including_the_background_is_bound() -> None:
+    """A Background whose steps are undefined fails every scenario in the file
+    before its first assertion."""
+    from services.discovery.codegen import generation_plan
+
+    app_map = ApplicationMap(
+        base_url="http://app.test",
+        pages={p["route"]: p for p in (LOGIN, NEW_RESIDENT)},
+    )
+    features = derive_features(app_map)
+    plan = plan_from_features(features, base_url="http://app.test", signed_in=True)
+    generation = generation_plan(features, plan, app_map.catalog(), base_class="BasePage")
+
+    planned = {step.text for spec in plan.features for step in spec.background}
+    planned |= {
+        step.text for spec in plan.features
+        for scenario in spec.scenarios for step in scenario.steps
+    }
+    assert planned - {step.text for step in generation.steps} == set()
+
+
+def test_the_runner_is_given_the_account_the_suite_signs_in_with() -> None:
+    """`sanitized_env` strips anything that looks like a password, correctly.
+
+    So they have to be handed back deliberately. Without them `signIn()` fills
+    two empty strings, the application stays on the login page, and every
+    scenario behind it times out.
+    """
+    from agents.base import AgentContext
+    from agents.execution.agent import ExecutionAgent
+    from packages.aiqa_types.enums import RunMode
+    from packages.aiqa_types.models import Project
+
+    ctx = AgentContext(
+        run_id="r",
+        project=Project(org_id="o", name="p", repository_path="."),
+        instruction="x",
+        mode=RunMode.FULL,
+    )
+    ctx.credentials = AppCredentials(username="qa.bot", password="hunter2")
+
+    assert ExecutionAgent._app_env(ctx) == {
+        "AIQA_APP_USERNAME": "qa.bot",
+        "AIQA_APP_PASSWORD": "hunter2",
+    }
+
