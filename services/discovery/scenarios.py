@@ -200,33 +200,52 @@ def _form(feature: DiscoveredFeature) -> list[Scenario]:
 
 
 def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
-    """One data-driven rejection scenario covering every required field.
+    """One rejection scenario per field the application marks required.
 
-    A Scenario Outline with a real Examples table, because that is what data
-    driven means. The previous generator emitted `{string}` — a Cucumber
-    *expression* placeholder — into the feature file with no Examples at all,
-    which does not parse.
+    Leaving a field empty is expressed by *not filling it* — every other field
+    is filled and this one is skipped. That needs no step the happy path does
+    not already have, so there is no `submitTheFormWithTheEmailFieldEmpty`
+    method to generate and nothing new for the resolver to fail to bind. The
+    scenario name says which field is missing; the steps show it.
+
+    An earlier version made this one Scenario Outline over the field names, but
+    the field was the part that varied, so it could only be a `{string}`
+    parameter — one step matching every field and bindable to no element.
     """
     required = _required_fields(feature)[:3]
-    if not required:
+    fillable = [name for name in feature.fields if name]
+    if not required or len(fillable) < 2:
         return []
+
     page = _page_name(feature)
-    return [
-        Scenario(
-            name=f"Reject a submission with {field} left empty",
-            description=f"The application marks {field} required.",
-            tags=["@negative", "@P1"],
-            priority=Priority.P1,
-            layer=TestLayer.UI,
-            negative=True,
-            steps=[
-                GherkinStep(keyword="Given", text=f"I am on the {page} page"),
-                GherkinStep(keyword="When", text=f"I submit the form with the {field} field empty"),
-                GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
-            ],
+    scenarios: list[Scenario] = []
+    for missing in required:
+        steps = [GherkinStep(keyword="Given", text=f"I am on the {page} page")]
+        first = True
+        for field in fillable[:8]:
+            if field == missing:
+                continue
+            steps.append(
+                GherkinStep(
+                    keyword="When" if first else "And",
+                    text=f'I enter "{_sample(field)}" in the {field} field',
+                )
+            )
+            first = False
+        steps.append(GherkinStep(keyword="And", text="I submit the form"))
+        steps.append(GherkinStep(keyword="Then", text=f"I am still on the {page} page"))
+        scenarios.append(
+            Scenario(
+                name=f"Reject a submission with {missing} left empty",
+                description=f"The application marks {missing} required.",
+                tags=["@negative", "@P1"],
+                priority=Priority.P1,
+                layer=TestLayer.UI,
+                negative=True,
+                steps=steps,
+            )
         )
-        for field in required
-    ]
+    return scenarios
 
 
 def _listing(feature: DiscoveredFeature) -> list[Scenario]:

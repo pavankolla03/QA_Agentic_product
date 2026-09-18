@@ -256,8 +256,37 @@ def test_only_real_data_is_quoted() -> None:
 
     assert 'When I enter "QA Autopilot" in the Full name field' in steps
     assert not any('in "Full name"' in step for step in steps)
-    # Each required field gets its own scenario, so each binds to its own field.
-    assert "When I submit the form with the Email field empty" in steps
+    # Every step shape used here is one the happy path already needs.
+    assert {step.split(" ", 1)[1] for step in steps} == {
+        "I am on the Add resident page",
+        'I enter "QA Autopilot" in the Full name field',
+        'I enter "qa.autopilot@example.com" in the Email field',
+        'I enter "QA autopilot" in the Notes field',
+        "I submit the form",
+        "I am taken away from the Add resident page",
+        "I am still on the Add resident page",
+    }
+
+
+def test_a_field_is_left_empty_by_not_filling_it() -> None:
+    """Which needs no step the happy path does not already have.
+
+    There is no `submitTheFormWithTheEmailFieldEmpty` method to generate, so
+    nothing new for the resolver to fail to bind. The scenario name says which
+    field is missing; the steps show it.
+    """
+    plan = _plan(NEW_RESIDENT)
+    rejection = next(
+        scenario
+        for spec in plan.features
+        for scenario in spec.scenarios
+        if "Email left empty" in scenario.name
+    )
+    filled = [step.text for step in rejection.steps if step.text.startswith("I enter")]
+
+    assert any("Full name field" in step for step in filled)
+    assert not any("Email field" in step for step in filled)
+    assert rejection.steps[-1].text == "I am still on the Add resident page"
 
 
 def test_the_sign_in_flow_is_covered_both_ways() -> None:

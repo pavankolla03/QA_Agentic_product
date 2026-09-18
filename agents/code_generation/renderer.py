@@ -66,6 +66,12 @@ class PagePlan:
     #: default that happens to be a real route is otherwise indistinguishable
     #: from a deliberate choice.
     route_source: str = "default"
+    #: The page title the crawl read off this page, when it read one.
+    #:
+    #: Used by page-level assertions in preference to the URL. A route like
+    #: `/residents/:id/edit` is a pattern, not an address, so comparing it to a
+    #: real URL never matches — and the title was observed just as directly.
+    title: str = ""
 
 
 @dataclass
@@ -288,6 +294,26 @@ def _render_method_body(method: MethodPlan, plan: PagePlan) -> list[str]:
             "await this.page.goto(this.path);",
         ]
 
+    if method.kind == "page_assertion":
+        # Assertions about the page itself rather than about something on it:
+        # where we are, and what it is called. Every other kind needs a locator,
+        # and these are exactly the checks that have none — "the form was
+        # rejected" is observable as "we did not leave", and no element on the
+        # page says so.
+        #
+        # The title rather than the URL, wherever we have one. A route may be a
+        # pattern (`/residents/:id/edit`) which no real address ever equals,
+        # while the title was read straight off the page during the crawl.
+        argument = method.params[0] if method.params else ""
+        if method.expect == "title" and argument:
+            return [f"await expect(this.page).toHaveTitle({argument});"]
+        if plan.title:
+            literal = _ts_string(plan.title)
+            negate = ".not" if method.expect == "left" else ""
+            return [f"await expect(this.page){negate}.toHaveTitle({literal});"]
+        negate = ".not" if method.expect == "left" else ""
+        return [f"expect(this.page.url()){negate}.toContain(this.path);"]
+
     if method.kind == "assertion":
         matcher = method.expect or "toBeVisible"
         target = method.locators[0] if method.locators else ""
@@ -331,6 +357,12 @@ def _interaction(prop: str, role: str, parameter: str) -> str:
     if role in ("checkbox", "radio"):
         return f"await this.{prop}.setChecked({parameter} === 'true');"
     return f"await this.{prop}.fill({parameter});"
+
+
+def _ts_string(value: str) -> str:
+    """A TypeScript single-quoted literal that cannot break out of its quotes."""
+    escaped = (value or "").replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
 
 
 def _testid_of(expression: str) -> str:
