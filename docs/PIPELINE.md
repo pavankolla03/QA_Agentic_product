@@ -229,6 +229,39 @@ specification.
   test_design          refuses outright if exploration found nothing
 ```
 
+### Signing in first
+
+Everything worth testing is behind a login. Without credentials the crawler
+follows every navigation link, is redirected back to the sign-in page each time,
+and records one screen several times over — which looks like a small application
+rather than like a failure, so nothing downstream questions it.
+
+```
+"https://app.example.com user: qa.bot pass: ..."
+          │
+          ├─ credentials stripped from the text before it becomes the
+          │  instruction, stored in the project's .aiqa/ (git-ignored),
+          │  never in the database and never in a prompt
+          ▼
+   sign in ──── verified? ──no──▶ run BLOCKED, naming the failure
+          │
+         yes
+          ▼
+   crawl everything behind the login, never following "Log out"
+```
+
+Three refusals worth naming. The sign-in is **verified**, not assumed —
+submitting a form is not the same as holding a session. The sign-in page is
+**captured before leaving it**, or the one screen every user meets has no
+coverage for the same reason it has no page. And a link that ends the session is
+**never followed**, because every page after it would be the login screen again.
+
+Credentials reach the generated suite as `AIQA_APP_USERNAME` and
+`AIQA_APP_PASSWORD`, read at run time, so the output can be committed and run in
+CI without a password entering the repository.
+
+### Where the scenarios come from
+
 The requirement stage produces an empty requirement on purpose. A model asked
 "what should I test at this URL?" answers confidently and completely wrongly:
 forty plausible scenarios for a site it has never loaded, each bound to a
@@ -251,6 +284,27 @@ triggers it was not, and a "then" without its "when" is an invention.
 When the crawl finds nothing, nothing is written and `test_design` fails naming
 the URL. A failed run naming the URL is the honest outcome; a green run full of
 fiction is not.
+
+### No model between the crawl and the code
+
+For autopilot the scenarios and the page objects are both rendered from the
+discovered features rather than designed by a model. Asking one to turn observed
+features into Gherkin produced `Then the resident should exist in the database`
+for an application with no database step, `Then the reports page should load`
+which asserts nothing, and a `Scenario Outline` whose placeholder was `{string}`
+with no Examples table. Asking one to turn those scenarios into page objects
+produced classes with no `goto`, no way to sign in and nothing that could say
+"we are still on this page" — fifteen good scenarios, twenty blocked steps.
+
+Both ends are known: the vocabulary is fixed, the elements were observed. When
+both ends are known the mapping is a lookup, not a judgement.
+
+**Only real data is quoted.** Cucumber turns a quoted fragment into a `{string}`
+parameter, so `I fill in "Full name" with "QA Autopilot"` compiles down to `I
+fill in {string} with {string}` — one step matching every field and bindable to
+no particular element. The page and the field belong in the sentence; the value
+somebody types is the only part that varies. For the same reason a field is
+"left empty" by *not filling it* rather than by a step that names it.
 
 ---
 

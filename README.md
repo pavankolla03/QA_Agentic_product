@@ -114,6 +114,20 @@ is a complete instruction:
 aiqa run start <project-id> "http://localhost:3000"
 ```
 
+Almost everything worth testing sits behind a sign-in, so give it an account
+too. The credentials are stripped from the text before it becomes the run's
+instruction, kept in the project's own `.aiqa/` directory (git-ignored on
+creation) rather than the control-plane database, and never enter a prompt:
+
+```bash
+aiqa run start <project-id> "http://localhost:3000 user: qa.bot pass: <password>"
+```
+
+The generated suite reads `AIQA_APP_USERNAME` and `AIQA_APP_PASSWORD` at run
+time, so it can be committed and run in CI without a password in the repository.
+If the sign-in is refused the run stops and says so, rather than crawling the
+login page repeatedly and presenting it as the application.
+
 The application is then the specification. Exploration crawls it, names the
 features it can see, and those become the acceptance criteria — so the plan
 covers what is actually there rather than what a model expects a site like that
