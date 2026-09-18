@@ -62,6 +62,9 @@ from agents.code_generation.visual_renderer import (
 )
 from packages.aiqa_types.enums import AgentName, ArtifactKind, Capability, ChangeType
 from packages.aiqa_types.models import CodeBundle, FileChange, TestPlan
+from services.discovery.autopilot import DiscoveredFeature
+from services.discovery.codegen import describe as describe_generation
+from services.discovery.codegen import generation_plan
 from tools.filesystem.fs_tools import make_diff
 
 #: How a file says this platform wrote it, and may rewrite it.
@@ -230,6 +233,49 @@ class CodeGenerationAgent(BaseAgent):
             "tests_dir": defaults.get("tests_dir", "tests"),
         }
 
+    def _plan_from_discovery(
+        self, ctx: AgentContext, plan: TestPlan, catalog: list[dict[str, Any]]
+    ) -> GenerationPlan | None:
+        """Page objects and bindings for a plan the crawl already decided."""
+        if not ctx.metadata.get("autopilot"):
+            return None
+        raw = ctx.metadata.get("discovered_features") or []
+        features = [DiscoveredFeature(**entry) for entry in raw if isinstance(entry, dict)]
+        if not features or not catalog:
+            return None
+
+        titles: dict[str, str] = {}
+        app_map = ctx.application_map
+        for route, page in (getattr(app_map, "pages", {}) or {}).items():
+            title = page.get("title") if isinstance(page, dict) else getattr(page, "title", "")
+            if title:
+                titles[route] = str(title)
+
+        generation = generation_plan(
+            features, plan, catalog,
+            base_class=self._base_class(ctx),
+            page_titles=titles,
+        )
+        if not generation.pages:
+            return None
+
+        bound = {step.text for step in generation.steps}
+        planned = {
+            step.text for feature in plan.features
+            for scenario in feature.scenarios for step in scenario.steps
+        }
+        unbound = sorted(planned - bound)
+        ctx.note(f"generated deterministically: {describe_generation(generation)}")
+        if unbound:
+            # Named rather than approximated. Binding a step to the nearest
+            # thing that compiles is how a suite ends up exercising the wrong
+            # control and passing.
+            ctx.warn(
+                f"{len(unbound)} planned step(s) have no observed element behind them: "
+                + "; ".join(f'"{text}"' for text in unbound[:4])
+            )
+        return generation
+
     def _base_class(self, ctx: AgentContext) -> str:
         return ((ctx.repo_profile.naming_conventions if ctx.repo_profile else {}) or {}).get(
             "page_object_base_class", ""
@@ -287,6 +333,18 @@ class CodeGenerationAgent(BaseAgent):
     # -- 2. the single planning call ------------------------------------ #
     async def _plan(self, ctx: AgentContext, plan: TestPlan) -> GenerationPlan:
         catalog = ctx.metadata.get("locator_catalog", []) or []
+
+        # Autopilot wrote the scenarios itself, from a fixed vocabulary, against
+        # elements it observed. Both ends of the mapping are therefore known, and
+        # asking a model to rediscover it was the last place invention could get
+        # in — it duly did: one run planned fifteen good scenarios and blocked
+        # twenty of their steps, because the page objects it generated had no
+        # `goto`, no way to sign in, and nothing that could say "we are still on
+        # this page". The plan was right and none of it ran.
+        deterministic = self._plan_from_discovery(ctx, plan, catalog)
+        if deterministic is not None:
+            return deterministic
+
         existing_pages = [p.name for p in (ctx.repo_profile.symbols_of("page_object") if ctx.repo_profile else [])]
         existing_steps = [
             s.name for s in (ctx.repo_profile.symbols_of("step") if ctx.repo_profile else [])

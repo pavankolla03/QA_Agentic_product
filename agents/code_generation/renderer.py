@@ -294,6 +294,34 @@ def _render_method_body(method: MethodPlan, plan: PagePlan) -> list[str]:
             "await this.page.goto(this.path);",
         ]
 
+    if method.kind == "credentials":
+        # Read at run time, never written down. A generated suite has to be
+        # committable, and a password in a page object is a password in the
+        # repository — the variables are the same ones the crawler reads, so
+        # whatever signed the crawl in signs the test in.
+        identifier = method.locators[0] if method.locators else ""
+        secret = method.locators[1] if len(method.locators) > 1 else ""
+        body = []
+        if identifier in known:
+            body.append(f"await this.{identifier}.fill(process.env.AIQA_APP_USERNAME ?? '');")
+        if secret in known:
+            if method.expect == "wrong":
+                # A password that is deliberately not the real one. Derived from
+                # it so the test still fails for the right reason if the account
+                # is changed, rather than passing because both are empty.
+                body.append(
+                    "await this."
+                    + secret
+                    + ".fill((process.env.AIQA_APP_PASSWORD ?? 'x') + '-definitely-wrong');"
+                )
+            else:
+                body.append(f"await this.{secret}.fill(process.env.AIQA_APP_PASSWORD ?? '');")
+        if any(m.name == "submitForm" for m in plan.methods):
+            body.append("await this.submitForm();")
+        if not body:
+            body.append("// TODO(aiqa): no sign-in fields were observed on this page.")
+        return body
+
     if method.kind == "page_assertion":
         # Assertions about the page itself rather than about something on it:
         # where we are, and what it is called. Every other kind needs a locator,
