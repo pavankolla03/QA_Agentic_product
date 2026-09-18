@@ -46,6 +46,11 @@ _ON_PAGE_RE = re.compile(r"^I am on the (?P<page>.+) page$")
 _LEFT_RE = re.compile(r"^I am taken away from the (?P<page>.+) page$")
 _STILL_RE = re.compile(r"^I am still on the (?P<page>.+) page$")
 _TITLE_RE = re.compile(r'^the page title is "(?P<title>[^"]*)"$')
+#: Named by page, and it has to be. Cucumber matches a step by its text across
+#: the whole suite, so a bare "I submit the form" is one definition bound to one
+#: page object — the first that used it — and every other page's submit then
+#: clicked a button that was not on the screen and waited out the timeout.
+_SUBMIT_RE = re.compile(r"^I submit the (?P<page>.+) form$")
 
 
 def generation_plan(
@@ -178,6 +183,10 @@ def _bind_steps(plan: TestPlan, by_page_name: dict[str, PagePlan]) -> list[StepP
     """
     steps: list[StepPlan] = []
     seen: set[str] = set()
+    bound_to: dict[str, str] = {}
+    #: Step text -> every page it was used on. More than one is a bug that only
+    #: shows up at run time, as a timeout on a control that is not on screen.
+    ambiguous: dict[str, set[str]] = {}
     current: PagePlan | None = None
 
     for spec in plan.features:
@@ -199,15 +208,32 @@ def _bind_steps(plan: TestPlan, by_page_name: dict[str, PagePlan]) -> list[StepP
                         )
                     continue
 
-                if current is None or text in seen:
+                if current is None:
                     continue
                 call = _call_for(text, current)
                 if call is None:
                     continue
+                # Every use is recorded, including the ones already bound: the
+                # collision is between uses, so skipping repeats would hide it.
+                ambiguous.setdefault(text, set()).add(current.class_name)
+                if text in seen:
+                    continue
                 seen.add(text)
+                bound_to[text] = current.class_name
                 steps.append(
                     StepPlan(text=text, keyword=step.keyword, page=current.class_name, call=call)
                 )
+
+    collisions = sorted(
+        text for text, pages in ambiguous.items() if len(pages) > 1
+    )
+    if collisions:
+        raise ValueError(
+            "step text that means different things on different pages: "
+            + "; ".join(f'"{text}"' for text in collisions[:4])
+            + ". Cucumber defines each of these once, so every page after the "
+            "first would drive the wrong one."
+        )
     return steps
 
 
@@ -217,7 +243,7 @@ def _call_for(text: str, page: PagePlan) -> str | None:
         method = f"enter{pascal(enter.group('field'))}"
         return f"{method}(value1)" if _has(page, method) else None
 
-    if text == "I submit the form":
+    if _SUBMIT_RE.match(text):
         return "submitForm()" if _has(page, "submitForm") else None
     if text == "I sign in with valid credentials":
         return "signIn()" if _has(page, "signIn") else None

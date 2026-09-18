@@ -213,7 +213,7 @@ def _form(feature: DiscoveredFeature) -> list[Scenario]:
                 text=f'I enter "{_value_for(feature, field)}" in the {field} field',
             )
         )
-    steps.append(GherkinStep(keyword="And", text="I submit the form"))
+    steps.append(GherkinStep(keyword="And", text=f"I submit the {page} form"))
     # "Accepted" without having ever submitted during the crawl is not something
     # we know. "We left the page we were on" is the observable consequence, and
     # it is wrong loudly rather than passing quietly.
@@ -266,7 +266,7 @@ def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
                 )
             )
             first = False
-        steps.append(GherkinStep(keyword="And", text="I submit the form"))
+        steps.append(GherkinStep(keyword="And", text=f"I submit the {page} form"))
         steps.append(GherkinStep(keyword="Then", text=f"I am still on the {page} page"))
         scenarios.append(
             Scenario(
@@ -316,6 +316,7 @@ def _navigation(feature: DiscoveredFeature) -> list[Scenario]:
 
 def _search(feature: DiscoveredFeature) -> list[Scenario]:
     box = feature.fields[0] if feature.fields else "search"
+    page = _page_name(feature)
     return [
         Scenario(
             name="Searching updates the page",
@@ -324,10 +325,10 @@ def _search(feature: DiscoveredFeature) -> list[Scenario]:
             priority=Priority.P2,
             layer=TestLayer.UI,
             steps=[
-                GherkinStep(keyword="Given", text=f"I am on the {_page_name(feature)} page"),
+                GherkinStep(keyword="Given", text=f"I am on the {page} page"),
                 GherkinStep(keyword="When", text=f'I enter "{_DEFAULT_SAMPLE}" in the {box} field'),
-                GherkinStep(keyword="And", text="I submit the form"),
-                GherkinStep(keyword="Then", text=f"I am still on the {_page_name(feature)} page"),
+                GherkinStep(keyword="And", text=f"I submit the {page} form"),
+                GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
             ],
         )
     ]

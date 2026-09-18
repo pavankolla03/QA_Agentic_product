@@ -268,7 +268,7 @@ def test_only_real_data_is_quoted() -> None:
         'I enter "QA Autopilot" in the Full name field',
         'I enter "qa.autopilot@example.com" in the Email field',
         'I enter "QA autopilot" in the Notes field',
-        "I submit the form",
+        "I submit the Add resident form",
         "I am taken away from the Add resident page",
         "I am still on the Add resident page",
     }
@@ -509,4 +509,64 @@ def test_a_dropdown_whose_options_were_never_seen_is_left_alone() -> None:
 
     assert not any("Resident type" in step for step in steps)
     assert any("Full name field" in step for step in steps)
+
+
+# --------------------------------------------------------------------------- #
+# One step text, one meaning
+# --------------------------------------------------------------------------- #
+def test_the_submit_step_names_its_page() -> None:
+    """Cucumber matches a step by its text across the whole suite.
+
+    A bare "I submit the form" is therefore one definition bound to one page
+    object — the first feature that used it. Every other page's submit then
+    clicked a button that was not on screen and waited out the full timeout:
+    five failures reading `locator.click: Timeout`, all of them pressing the
+    sign-in button while standing on the resident form.
+    """
+    plan = _plan(LOGIN, NEW_RESIDENT)
+    submits = {step for step in _all_steps(plan) if "submit the" in step}
+
+    assert "And I submit the Add resident form" in submits
+    assert not any(step.endswith("I submit the form") for step in submits)
+
+
+def test_a_step_that_means_two_pages_is_refused() -> None:
+    """The guard for the whole class, not just the one instance.
+
+    A step bound to the wrong page fails as a timeout on a control that is not
+    there, which reads as a slow application rather than as a wiring mistake —
+    so it has to be caught where the wiring happens.
+    """
+    import pytest as _pytest
+
+    from packages.aiqa_types.models import FeatureSpec, GherkinStep, Scenario, TestPlan
+    from services.discovery.codegen import generation_plan
+
+    app_map = ApplicationMap(
+        base_url="http://app.test",
+        pages={p["route"]: p for p in (LOGIN, NEW_RESIDENT)},
+    )
+    features = derive_features(app_map)
+
+    def _spec(name: str, page: str) -> FeatureSpec:
+        return FeatureSpec(
+            name=name,
+            scenarios=[
+                Scenario(
+                    name=name,
+                    steps=[
+                        GherkinStep(keyword="Given", text=f"I am on the {page} page"),
+                        # The same words on two different pages. It binds on
+                        # both — that is what makes it dangerous rather than
+                        # merely undefined.
+                        GherkinStep(keyword="When", text="I submit the Sign in form"),
+                    ],
+                )
+            ],
+        )
+
+    hand_made = TestPlan(features=[_spec("a", "Sign in"), _spec("b", "Add resident")])
+
+    with _pytest.raises(ValueError, match="different things on different pages"):
+        generation_plan(features, hand_made, app_map.catalog(), base_class="BasePage")
 
