@@ -57,6 +57,12 @@ _TITLE_RE = re.compile(r'^the page title is "(?P<title>[^"]*)"$')
 #: clicked a button that was not on the screen and waited out the timeout.
 _SUBMIT_RE = re.compile(r"^I submit the (?P<page>.+) form$")
 _ROW_RE = re.compile(r"^I should see at least one row on the (?P<page>.+) page$")
+# Named by page for the usual reason, and for one more: a repository often has
+# its own hand-written "I sign in with an incorrect password". Generating the
+# same text means Cucumber picks one of the two, and the hand-written one
+# expects a Given this scenario never ran.
+_SIGNIN_RE = re.compile(r"^I sign in on the (?P<page>.+) page with valid credentials$")
+_WRONG_RE = re.compile(r"^I sign in on the (?P<page>.+) page with an incorrect password$")
 
 
 def generation_plan(
@@ -251,9 +257,9 @@ def _call_for(text: str, page: PagePlan) -> str | None:
 
     if _SUBMIT_RE.match(text):
         return "submitForm()" if _has(page, "submitForm") else None
-    if text == "I sign in with valid credentials":
+    if _SIGNIN_RE.match(text):
         return "signIn()" if _has(page, "signIn") else None
-    if text == "I sign in with an incorrect password":
+    if _WRONG_RE.match(text):
         return "signInWithWrongPassword()" if _has(page, "signInWithWrongPassword") else None
     if _ROW_RE.match(text):
         return "expectAtLeastOneRow()" if _has(page, "expectAtLeastOneRow") else None

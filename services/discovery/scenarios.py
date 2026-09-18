@@ -137,7 +137,7 @@ def _sign_in_background(feature: DiscoveredFeature, sign_in_page: str) -> list[G
         return []
     return [
         GherkinStep(keyword="Given", text=f"I am on the {sign_in_page} page"),
-        GherkinStep(keyword="And", text="I sign in with valid credentials"),
+        GherkinStep(keyword="And", text=f"I sign in on the {sign_in_page} page with valid credentials"),
     ]
 
 
@@ -176,7 +176,7 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
             layer=TestLayer.UI,
             steps=[
                 GherkinStep(keyword="Given", text=f"I am on the {page} page"),
-                GherkinStep(keyword="When", text="I sign in with valid credentials"),
+                GherkinStep(keyword="When", text=f"I sign in on the {page} page with valid credentials"),
                 GherkinStep(keyword="Then", text=f"I am taken away from the {page} page"),
             ],
         ),
@@ -189,7 +189,7 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
             negative=True,
             steps=[
                 GherkinStep(keyword="Given", text=f"I am on the {page} page"),
-                GherkinStep(keyword="When", text="I sign in with an incorrect password"),
+                GherkinStep(keyword="When", text=f"I sign in on the {page} page with an incorrect password"),
                 GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
             ],
         ),

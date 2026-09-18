@@ -387,7 +387,7 @@ def test_pages_behind_a_login_sign_in_before_every_scenario() -> None:
 
     assert [step.text for step in form.background] == [
         "I am on the Sign in page",
-        "I sign in with valid credentials",
+        "I sign in on the Sign in page with valid credentials",
     ]
 
 
@@ -569,4 +569,34 @@ def test_a_step_that_means_two_pages_is_refused() -> None:
 
     with _pytest.raises(ValueError, match="different things on different pages"):
         generation_plan(features, hand_made, app_map.catalog(), base_class="BasePage")
+
+
+def test_a_filter_box_is_a_search_not_a_form_submission() -> None:
+    """An index page's search field is a form with one input, and is not data entry.
+
+    Treating it as one produced "submitting the Residents form takes you away
+    from the Residents page" — the opposite of what a search does, and it failed
+    for exactly that reason.
+    """
+    from services.discovery.autopilot import KIND_SEARCH
+
+    listing = {
+        "route": "/residents",
+        "title": "Residents - Acme",
+        "forms": [{"action": "/residents", "method": "get"}],
+        "elements": [
+            {"name": "Search residents", "role": "textbox", "locator": "getByTestId('q')",
+             "confidence": 0.95},
+            {"name": "Search", "role": "button", "locator": "getByTestId('s')",
+             "confidence": 0.95},
+        ],
+    }
+    feature = derive_features(
+        ApplicationMap(base_url="http://app.test", pages={"/residents": listing})
+    )[0]
+    assert feature.kind == KIND_SEARCH
+
+    steps = _all_steps(plan_from_features([feature], base_url="http://app.test"))
+    assert "Then I am still on the Residents page" in steps
+    assert not any("taken away" in step for step in steps)
 

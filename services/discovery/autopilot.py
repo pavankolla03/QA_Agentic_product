@@ -161,10 +161,16 @@ def _features_of(page: PageKnowledge) -> list[DiscoveredFeature]:
     if _renders_rows(locators) and not _is_data_entry(inputs):
         return [_listing(page, label, locators)]
 
-    if page.forms and inputs:
+    # A form is only a data-entry form if it takes data. An index page's filter
+    # box is a form with one field, and treating it as one produced "submitting
+    # the Residents form takes you away from the Residents page" — which is the
+    # opposite of what a search does, and failed for exactly that reason.
+    if page.forms and inputs and _is_data_entry(inputs):
         return [_form(page, label, inputs, required)]
     if _is_search(inputs):
         return [_search(page, label, inputs)]
+    if page.forms and inputs:
+        return [_form(page, label, inputs, required)]
     if _renders_rows(locators):
         return [_listing(page, label, locators)]
     return [_page_load(page, label, locators)]
@@ -225,7 +231,10 @@ def _search(page: PageKnowledge, label: str, inputs: list[Any]) -> DiscoveredFea
         name=_name(label, "search"),
         kind=KIND_SEARCH,
         route=page.route,
-        rationale=f"{page.route} has a search input ({box}) outside any form",
+        rationale=(
+            f"{page.route} has a search input ({box}) and nothing else to enter, "
+            "so it filters a view rather than creating a record"
+        ),
         criteria=[f"Searching from {page.route} updates what the page shows"],
         fields=[box],
         confidence=_confidence(page, inputs) * 0.9,

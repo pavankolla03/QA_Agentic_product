@@ -404,8 +404,14 @@ def test_an_unbindable_call_is_shown_as_something_callable() -> None:
 def test_a_page_is_constructed_before_it_is_used() -> None:
     """A scenario can start on a `When`, so setup may never have run.
 
-    Without a lazy construction the first step to touch a page dereferences an
-    undeclared variable — code that compiles and dies on the first run.
+    Without constructing it here, the first step to touch a page dereferences
+    an undeclared variable — code that compiles and dies on the first run.
+
+    Assigned rather than `??=`. The variable lives at module scope and outlives
+    the scenario that set it, so `??=` keeps a Page Object pointing at a browser
+    context the previous scenario's teardown already closed. That surfaced as
+    `locator.fill: Target page, context or browser has been closed` in a
+    scenario that had never touched the page it was complaining about.
     """
     page = PagePlan(
         class_name="DashboardPage",
@@ -418,8 +424,9 @@ def test_a_page_is_constructed_before_it_is_used() -> None:
     ]
     source = render_steps(steps, [page])
 
-    assert "dashboardPage ??= new DashboardPage(this.page);" in source
-    assert source.index("??=") < source.index("openRegistration()")
+    assert "dashboardPage = new DashboardPage(this.page);" in source
+    assert "??=" not in source
+    assert source.index("new DashboardPage") < source.index("openRegistration()")
 
 
 def test_a_setup_step_still_constructs_eagerly_and_navigates() -> None:

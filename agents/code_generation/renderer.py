@@ -636,7 +636,16 @@ def render_steps(
             # scenario can start on a `When`. Without this the first step to use
             # a page dereferences an undeclared variable at runtime — code that
             # compiles and then dies on the first run.
-            lines.append(f"  {instance} ??= new {step.page}(this.page);")
+            #
+            # Assigned, never `??=`. The variable lives at module scope, so it
+            # outlives the scenario that set it, and `??=` would keep a Page
+            # Object pointing at a browser context the previous scenario's
+            # teardown has already closed. That surfaces as `locator.fill:
+            # Target page, context or browser has been closed` — an error about
+            # the wrong thing entirely, in a scenario that never touched the
+            # page it is complaining about. A Page Object is a thin wrapper
+            # around `this.page`; building a fresh one costs nothing.
+            lines.append(f"  {instance} = new {step.page}(this.page);")
 
         if invented:
             # The class is reused, the method is not its own. Saying so is more
