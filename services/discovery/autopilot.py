@@ -72,6 +72,13 @@ class DiscoveredFeature:
     rationale: str
     criteria: list[str] = field(default_factory=list)
     fields: list[str] = field(default_factory=list)
+    #: Field name -> the values that field will accept, for dropdowns.
+    #:
+    #: A generated test has to put *something* in each field, and for a free
+    #: text box anything will do. A `<select>` accepts only what it lists, and
+    #: `selectOption` on a value it does not have waits for the timeout rather
+    #: than failing — so a guess here costs thirty seconds and tells nobody why.
+    field_options: dict[str, list[str]] = field(default_factory=dict)
     confidence: float = 0.7
     #: Captured over plain HTTP rather than in a browser, so nothing on it has
     #: been interacted with and its criteria are proposals, not observations.
@@ -89,6 +96,7 @@ class DiscoveredFeature:
             "rationale": self.rationale,
             "criteria": list(self.criteria),
             "fields": list(self.fields),
+            "field_options": {k: list(v) for k, v in self.field_options.items()},
             "confidence": round(self.confidence, 2),
             "simulated": self.simulated,
         }
@@ -183,6 +191,7 @@ def _authentication(
         ),
         criteria=criteria,
         fields=[loc.name for loc in inputs],
+        field_options=_options_of(inputs),
         confidence=_confidence(page, inputs),
         simulated=page.simulated,
     )
@@ -204,6 +213,7 @@ def _form(
         ),
         criteria=criteria,
         fields=[loc.name for loc in inputs],
+        field_options=_options_of(inputs),
         confidence=_confidence(page, inputs),
         simulated=page.simulated,
     )
@@ -281,6 +291,22 @@ def _navigation_feature(app_map: ApplicationMap) -> DiscoveredFeature | None:
 
 
 # --------------------------------------------------------------------------- #
+def _options_of(inputs: list[Any]) -> dict[str, list[str]]:
+    """The accepted values for every field that restricts them.
+
+    A dropdown is listed even when its options were not captured, and the empty
+    list is the point: it is how a caller tells "any text is fine" from "only
+    these values, and we do not know what they are". Leaving it out entirely
+    would make an unread dropdown indistinguishable from a text box, which is
+    exactly the guess this exists to prevent.
+    """
+    return {
+        str(locator.name): [str(option) for option in (getattr(locator, "options", None) or [])]
+        for locator in inputs
+        if getattr(locator, "role", "") == "combobox"
+    }
+
+
 def _required_field_criteria(route: str, required: list[Any]) -> list[str]:
     # Each required field is its own rejection path, but past three of them the
     # suite is testing the browser's own validation rather than the application.

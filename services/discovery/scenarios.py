@@ -201,7 +201,7 @@ def _auth(feature: DiscoveredFeature) -> list[Scenario]:
 def _form(feature: DiscoveredFeature) -> list[Scenario]:
     """Fill everything and submit, plus one rejection path per required field."""
     page = _page_name(feature)
-    fillable = [name for name in feature.fields if name]
+    fillable = _fillable(feature)
     steps: list[GherkinStep] = [GherkinStep(keyword="Given", text=f"I am on the {page} page")]
     for index, field in enumerate(fillable[:8]):
         steps.append(
@@ -210,7 +210,7 @@ def _form(feature: DiscoveredFeature) -> list[Scenario]:
                 # The field is part of the sentence, the value is the parameter.
                 # Quoting the field name would collapse every one of these into
                 # a single step matching all of them and binding to none.
-                text=f'I enter "{_sample(field)}" in the {field} field',
+                text=f'I enter "{_value_for(feature, field)}" in the {field} field',
             )
         )
     steps.append(GherkinStep(keyword="And", text="I submit the form"))
@@ -247,7 +247,7 @@ def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
     parameter — one step matching every field and bindable to no element.
     """
     required = _required_fields(feature)[:3]
-    fillable = [name for name in feature.fields if name]
+    fillable = _fillable(feature)
     if not required or len(fillable) < 2:
         return []
 
@@ -262,7 +262,7 @@ def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
             steps.append(
                 GherkinStep(
                     keyword="When" if first else "And",
-                    text=f'I enter "{_sample(field)}" in the {field} field',
+                    text=f'I enter "{_value_for(feature, field)}" in the {field} field',
                 )
             )
             first = False
@@ -403,6 +403,31 @@ def _required_fields(feature: DiscoveredFeature) -> list[str]:
         if match:
             out.append(match.group(1).strip())
     return out
+
+
+def _fillable(feature: DiscoveredFeature) -> list[str]:
+    """Fields a test can put a value into without inventing one.
+
+    A dropdown whose options were never captured is skipped. `selectOption` on a
+    value a `<select>` does not list waits for the timeout rather than failing,
+    so a guess there costs thirty seconds and explains nothing — and leaving the
+    field at its default is what a person filling the form would do anyway.
+    """
+    return [
+        name
+        for name in feature.fields
+        if name and (name not in feature.field_options or feature.field_options[name])
+    ]
+
+
+def _value_for(feature: DiscoveredFeature, field: str) -> str:
+    """A value this particular field will accept.
+
+    For a dropdown that is one of its own options, read off the page. For
+    anything else, a sample chosen from the field's name.
+    """
+    options = feature.field_options.get(field) or []
+    return options[0] if options else _sample(field)
 
 
 def _sample(field: str) -> str:

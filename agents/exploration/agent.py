@@ -371,6 +371,7 @@ class ExplorationAgent(BaseAgent):
                     required=element.required,
                     input_type=element.input_type,
                     alternatives=element.alternatives[:3],
+                    options=list(element.options),
                     source="http_probe" if simulated else "exploration",
                 )
             )

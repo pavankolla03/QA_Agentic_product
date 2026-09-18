@@ -203,6 +203,9 @@ class DiscoveredElement(Base):
     locator_strategy: str = ""
     confidence: float = 0.0
     alternatives: list[str] = Field(default_factory=list)
+    #: What a dropdown will accept, read off the page. Empty for anything that
+    #: is not a `<select>` — and empty is the signal not to guess a value.
+    options: list[str] = Field(default_factory=list)
 
 
 class PageSnapshot(Base):

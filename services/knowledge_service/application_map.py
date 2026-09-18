@@ -90,6 +90,9 @@ class LocatorKnowledge:
     required: bool = False
     input_type: str | None = None
     alternatives: list[str] = field(default_factory=list)
+    #: The values a dropdown will accept. Empty means "not a dropdown, or we
+    #: did not see its options" — either way, do not invent one.
+    options: list[str] = field(default_factory=list)
     last_verified: float = field(default_factory=_now)
     verified_count: int = 1
     failed_count: int = 0
@@ -485,6 +488,7 @@ class ApplicationMap:
                         "locator": element.locator,
                         "strategy": element.strategy,
                         "confidence": round(element.confidence, 3),
+                        "options": list(element.options),
                     }
                 )
         out.sort(key=lambda item: item["confidence"], reverse=True)

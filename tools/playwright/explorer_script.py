@@ -112,13 +112,24 @@ async function harvest(page) {
       if (el.getAttribute('name')) alternatives.push(`locator('[name="${el.getAttribute('name')}"]')`);
       if (text && role === 'button') alternatives.push(`getByText('${text.replace(/'/g, "\\'")}')`);
 
+      // What a dropdown will actually accept. Without this the generator has
+      // to invent a value, and `selectOption('QA autopilot')` on a select whose
+      // options are "owner" and "tenant" waits thirty seconds and times out —
+      // an invented value failing slowly rather than loudly.
+      const options = el.tagName.toLowerCase() === 'select'
+        ? Array.from(el.options)
+            .map((o) => o.value || o.textContent.trim())
+            .filter((v) => v !== '')
+            .slice(0, 12)
+        : [];
+
       elements.push({
         role, name: accessibleName, tag: el.tagName.toLowerCase(),
         test_id: testId, label: label || null, placeholder, text,
         input_type: el.getAttribute('type'),
         required: el.hasAttribute('required') || el.getAttribute('aria-required') === 'true',
         recommended_locator: recommended, locator_strategy: strategy,
-        confidence, alternatives: alternatives.slice(0, 3),
+        confidence, alternatives: alternatives.slice(0, 3), options,
       });
     }
 

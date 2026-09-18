@@ -458,3 +458,55 @@ def test_the_runner_is_given_the_account_the_suite_signs_in_with() -> None:
         "AIQA_APP_PASSWORD": "hunter2",
     }
 
+
+# --------------------------------------------------------------------------- #
+# Dropdowns accept only what they list
+# --------------------------------------------------------------------------- #
+WITH_DROPDOWN = {
+    "route": "/residents/new",
+    "title": "Add resident - Acme",
+    "forms": [{"action": "/residents/new", "method": "post"}],
+    "elements": [
+        {"name": "Full name", "role": "textbox", "locator": "getByTestId('n')",
+         "confidence": 0.98, "required": True},
+        {"name": "Resident type", "role": "combobox", "locator": "getByTestId('t')",
+         "confidence": 0.98, "options": ["owner", "tenant"]},
+        {"name": "Create resident", "role": "button", "locator": "getByTestId('c')",
+         "confidence": 0.98},
+    ],
+}
+
+
+def test_a_dropdown_is_filled_with_one_of_its_own_options() -> None:
+    """`selectOption` on a value a select does not list waits for the timeout.
+
+    A real run spent thirty seconds per scenario choosing "QA autopilot" from a
+    dropdown whose options were "owner" and "tenant" — five failures that all
+    said `locator.selectOption: Timeout` and none of which were about timing.
+    """
+    plan = _plan(WITH_DROPDOWN)
+    steps = _all_steps(plan)
+
+    assert 'I enter "owner" in the Resident type field' in " | ".join(steps)
+    assert "QA autopilot" not in " | ".join(
+        step for step in steps if "Resident type" in step
+    )
+
+
+def test_a_dropdown_whose_options_were_never_seen_is_left_alone() -> None:
+    """Leaving it at its default is what a person filling the form would do.
+
+    Guessing costs a timeout and explains nothing.
+    """
+    unseen = {
+        **WITH_DROPDOWN,
+        "elements": [
+            dict(element, options=[]) if element["name"] == "Resident type" else element
+            for element in WITH_DROPDOWN["elements"]
+        ],
+    }
+    steps = _all_steps(_plan(unseen))
+
+    assert not any("Resident type" in step for step in steps)
+    assert any("Full name field" in step for step in steps)
+
