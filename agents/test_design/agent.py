@@ -24,6 +24,8 @@ from packages.aiqa_types.enums import (
     TestLayer,
 )
 from packages.aiqa_types.models import FeatureSpec, GherkinStep, Scenario, TestPlan
+from services.discovery.autopilot import DiscoveredFeature
+from services.discovery.scenarios import describe, plan_from_features
 
 if TYPE_CHECKING:  # imported lazily at runtime to keep the knowledge service optional
     from services.knowledge_service.test_knowledge import TestKnowledge
@@ -88,14 +90,25 @@ class TestDesignAgent(BaseAgent):
                 "the exploration warnings above say what was attempted."
             )
 
+        # ---- autopilot: the crawl already decided what the tests are ---- #
+        # Asking a model to turn observed features into Gherkin is where the
+        # invention creeps back in. It produced "the resident should exist in
+        # the database" for an application with no database step, "the reports
+        # page should load" which asserts nothing, and a Scenario Outline whose
+        # placeholder was `{string}` with no Examples table. Rendering the plan
+        # from the features costs nothing and cannot describe a page that was
+        # never seen.
+        plan = self._plan_from_discovery(ctx)
+
         # ---- 0. reuse discovery (deterministic, free) ------------------- #
         # Ask what we already have before paying a reasoning model to invent it.
-        reuse = self._discover_reuse(ctx)
+        reuse = self._discover_reuse(ctx) if plan is None else {}
 
         # ---- 1. can memory answer this outright? ------------------------ #
         # The cheapest call is the one never made. If every testable criterion
         # is already expressed by a remembered scenario, the design is a lookup.
-        plan = self._plan_from_memory(ctx)
+        if plan is None:
+            plan = self._plan_from_memory(ctx)
         if plan is None:
             # ---- one batched design call for every scenario -------------- #
             # Designing six scenarios in six calls costs six times as much and
@@ -195,6 +208,33 @@ class TestDesignAgent(BaseAgent):
         )
 
     # ------------------------------------------------------------------ #
+    def _plan_from_discovery(self, ctx: AgentContext) -> TestPlan | None:
+        """The plan the crawl already implies, for an autopilot run.
+
+        Only for autopilot, and only when exploration actually found something.
+        A run where somebody described the feature they want has information the
+        crawl does not, and a model is the right tool for reading it.
+        """
+        if not ctx.metadata.get("autopilot"):
+            return None
+        raw = ctx.metadata.get("discovered_features") or []
+        features = [DiscoveredFeature(**entry) for entry in raw if isinstance(entry, dict)]
+        if not features:
+            return None
+
+        plan = plan_from_features(
+            features,
+            run_id=ctx.run_id,
+            requirement_id=ctx.requirement.id if ctx.requirement else "",
+            base_url=ctx.metadata.get("target_url") or ctx.project.base_url or "",
+        )
+        summary = describe(plan)
+        ctx.note(
+            f"planned {summary['scenarios']} scenario(s) directly from {len(features)} discovered "
+            f"feature(s) — no model call, and nothing that describes a page the crawl did not see"
+        )
+        return plan
+
     def _discover_reuse(self, ctx: AgentContext) -> dict[str, Any]:
         """What the platform already knows that answers part of this request.
 

@@ -173,6 +173,7 @@ class ExploreAppTool(Tool):
         max_pages: int = 5,
         timeout: int = 20000,
         screenshots: bool = True,
+        credentials: dict[str, Any] | None = None,
         **_: Any,
     ) -> ToolResult:
         if not base_url:
@@ -181,7 +182,9 @@ class ExploreAppTool(Tool):
         toolchain = probe_toolchain(self.ctx.project_root)
         why_not_browser = ""
         if toolchain["node"] and toolchain["playwright_installed"]:
-            result = self._explore_with_playwright(base_url, paths or ["/"], max_pages, timeout, screenshots)
+            result = self._explore_with_playwright(
+                base_url, paths or ["/"], max_pages, timeout, screenshots, credentials
+            )
             if result.ok:
                 return result
             why_not_browser = result.error or "the browser run failed without saying why"
@@ -203,7 +206,13 @@ class ExploreAppTool(Tool):
 
     # -- real browser --------------------------------------------------- #
     def _explore_with_playwright(
-        self, base_url: str, paths: list[str], max_pages: int, timeout: int, screenshots: bool
+        self,
+        base_url: str,
+        paths: list[str],
+        max_pages: int,
+        timeout: int,
+        screenshots: bool,
+        credentials: dict[str, Any] | None = None,
     ) -> ToolResult:
         root = Path(self.ctx.project_root)
         aiqa_dir = root / ".aiqa"
@@ -221,6 +230,9 @@ class ExploreAppTool(Tool):
             "maxPages": max_pages,
             "timeout": timeout,
             "screenshotDir": shot_dir.as_posix() if screenshots else None,
+            # Handed to the browser and nowhere else. Not logged, not persisted,
+            # never part of a prompt.
+            "credentials": credentials or None,
         }
         runner = RunCommandTool(self.ctx)
         result = runner.run(
@@ -269,6 +281,10 @@ class ExploreAppTool(Tool):
                 "errors": data.get("errors", []),
                 "simulated": bool(data.get("simulated", False)),
                 "browser": str(data.get("browser") or ""),
+                # Whether the crawl held a session matters more than how many
+                # pages it saw: five pages behind a failed login are five copies
+                # of the login page.
+                "signed_in": bool(data.get("signed_in", False)),
             },
             pages=len(snapshots),
             elements=sum(len(s.elements) for s in snapshots),

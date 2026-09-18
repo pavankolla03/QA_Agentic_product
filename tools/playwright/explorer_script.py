@@ -25,6 +25,18 @@ const maxPages = config.maxPages ?? 5;
 const timeout = config.timeout ?? 20000;
 const startPaths = config.paths && config.paths.length ? config.paths : ['/'];
 const screenshotDir = config.screenshotDir || null;
+const credentials = config.credentials || null;
+
+// Links that end the session. Following one mid-crawl logs the crawler out, and
+// every page after it is the login screen again — which looks exactly like an
+// application with one page, and is how a crawl silently loses everything it
+// had not reached yet.
+const SESSION_ENDING = /(^|[\/_-])(logout|log-out|signout|sign-out|disconnect)([\/_-]|$|\?)/i;
+
+/** The one place that writes the result, so the sentinels cannot drift apart. */
+function emit(output) {
+  process.stdout.write('\n' + BEGIN + '\n' + JSON.stringify(output) + '\n' + END + '\n');
+}
 
 /** Collect every interactive element with a ranked locator recommendation. */
 async function harvest(page) {
@@ -133,6 +145,97 @@ async function harvest(page) {
       dom_size: document.documentElement.outerHTML.length,
     };
   });
+}
+
+/**
+ * Sign in, and be certain about whether it worked.
+ *
+ * The verification is the whole point. A crawler that submits a form and
+ * assumes success walks away with a session it does not have, follows every
+ * navigation link, is redirected to the login page each time, and reports a
+ * five-page application that is really one page five times. Everything built
+ * from that crawl is invention, because there was nothing else to build from.
+ *
+ * Returns true only when a password field was filled, submitted, and is gone.
+ */
+async function signIn(page, output) {
+  if (!credentials || !credentials.username || !credentials.password) return true;
+
+  const loginUrl = new URL(credentials.loginPath || '/', baseUrl).toString();
+  try {
+    await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout });
+  } catch (err) {
+    output.errors.push('sign-in: could not open ' + loginUrl + ': ' + String(err).slice(0, 160));
+    return false;
+  }
+
+  const password = page.locator('input[type="password"]').first();
+  if (!(await password.count())) {
+    output.errors.push('sign-in: no password field at ' + loginUrl + ' — give a login path if it is elsewhere');
+    return false;
+  }
+
+  // Record the sign-in page before leaving it. It is the one screen every user
+  // of the application meets, and signing in then crawling onwards left it out
+  // of the map entirely — so the most important flow in the product had no
+  // coverage, for the same reason it had no page: we walked straight past it.
+  try {
+    const data = await harvest(page);
+    output.snapshots.push({ url: page.url(), status: 200, screenshot_path: null, ...data });
+  } catch { /* the sign-in itself matters more than capturing the form */ }
+
+  // The identifier is whichever text-ish input comes before the password. That
+  // is what "the username field" means on every sign-in form, and it avoids
+  // guessing from names that differ per application.
+  const identifier = page.locator(
+    'input[type="text"], input[type="email"], input[type="tel"], input:not([type])'
+  ).first();
+  try {
+    if (await identifier.count()) await identifier.fill(credentials.username);
+    await password.fill(credentials.password);
+    for (const [name, value] of Object.entries(credentials.extra || {})) {
+      const field = page.locator(`[name="${name}"], #${name}`).first();
+      if (await field.count()) await field.fill(String(value));
+    }
+  } catch (err) {
+    output.errors.push('sign-in: could not fill the form: ' + String(err).slice(0, 160));
+    return false;
+  }
+
+  const submit = page.locator(
+    'button[type="submit"], input[type="submit"], form button'
+  ).first();
+  try {
+    if (await submit.count()) {
+      await submit.click();
+    } else {
+      await password.press('Enter');
+    }
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+  } catch (err) {
+    output.errors.push('sign-in: could not submit: ' + String(err).slice(0, 160));
+    return false;
+  }
+
+  // Still looking at a password field means the credentials were refused, the
+  // form wanted something more, or the submit did nothing. Any of those is a
+  // failure to sign in, and saying so is the only useful answer.
+  if (await page.locator('input[type="password"]').count()) {
+    const message = await page
+      .locator('[role="alert"], .error, [data-testid*="error"]')
+      .first()
+      .textContent()
+      .catch(() => null);
+    output.errors.push(
+      'sign-in failed: still on a page with a password field' +
+        (message ? ' (' + message.trim().slice(0, 120) + ')' : '')
+    );
+    return false;
+  }
+
+  output.signed_in = true;
+  output.landing_url = page.url();
+  return true;
 }
 
 /** The three rungs, tried in order. Returns null when no browser starts. */
@@ -270,7 +373,7 @@ async function crawlStatic(output) {
 }
 
 (async () => {
-  const output = { base_url: baseUrl, snapshots: [], unreachable: [], errors: [], simulated: false, browser: '' };
+  const output = { base_url: baseUrl, snapshots: [], unreachable: [], errors: [], simulated: false, browser: '', signed_in: false, landing_url: '' };
   let browser;
   try {
     browser = await launchBrowser(output);
@@ -280,14 +383,27 @@ async function crawlStatic(output) {
       output.simulated = true;
       output.browser = 'http (no browser)';
       await crawlStatic(output);
-      process.stdout.write('\n' + BEGIN + '\n' + JSON.stringify(output) + '\n' + END + '\n');
+      emit(output);
       return;
     }
     const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
     page.setDefaultTimeout(timeout);
 
-    const queue = [...startPaths];
+    const authenticated = await signIn(page, output);
+    if (credentials && credentials.username && !authenticated) {
+      // Credentials were offered and did not work. Crawling on would collect
+      // the login page over and over and present it as the application, so the
+      // honest move is to stop and say why.
+      await context.close();
+      await browser.close().catch(() => {});
+      emit(output);
+      return;
+    }
+
+    // Once signed in, the interesting pages hang off wherever the login landed,
+    // not off the login page the caller named.
+    const queue = output.landing_url ? [output.landing_url, ...startPaths] : [...startPaths];
     const seen = new Set();
 
     while (queue.length && output.snapshots.length < maxPages) {
@@ -307,6 +423,15 @@ async function crawlStatic(output) {
           continue;
         }
         await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+
+        // Where we landed counts as visited too. Signing in redirects "/" to
+        // the dashboard, so without this the dashboard is crawled twice and one
+        // page of the budget buys nothing.
+        if (page.url() !== url) {
+          if (seen.has(page.url())) continue;
+          seen.add(page.url());
+        }
+
         const data = await harvest(page);
 
         let screenshotPath = null;
@@ -321,6 +446,7 @@ async function crawlStatic(output) {
         for (const href of data.navigations) {
           try {
             const next = new URL(href, page.url());
+            if (SESSION_ENDING.test(next.pathname)) continue;   // never log ourselves out
             if (next.origin === new URL(baseUrl).origin && !seen.has(next.toString())) {
               queue.push(next.toString());
             }
@@ -338,6 +464,6 @@ async function crawlStatic(output) {
     if (browser) await browser.close().catch(() => {});
   }
 
-  process.stdout.write('\n' + BEGIN + '\n' + JSON.stringify(output) + '\n' + END + '\n');
+  emit(output);
 })();
 """

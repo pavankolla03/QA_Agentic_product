@@ -1,0 +1,330 @@
+"""A URL and a password, and it tests the application rather than its front door.
+
+Everything worth testing in a real application is behind a sign-in, and the
+crawler could not sign in. Pointed at an application that enforces login it
+followed every navigation link, was redirected each time, and recorded five
+"pages" that were five copies of the login screen. Autopilot then derived
+features from that, and the suite it produced described an application nobody
+had ever seen. That is where "it just generated some random code" comes from:
+there was nothing real to generate from.
+
+Two halves, and both matter:
+
+  - sign in, *verify* the sign-in worked, and never click Log out mid-crawl;
+  - build the scenarios from what was seen instead of asking a model to imagine
+    them.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from packages.aiqa_types.enums import RunStatus
+from services.discovery.autopilot import KIND_AUTH, KIND_FORM, KIND_LISTING, derive_features
+from services.discovery.credentials import AppCredentials, load, parse, save
+from services.discovery.scenarios import plan_from_features
+from services.knowledge_service.application_map import ApplicationMap
+
+
+# --------------------------------------------------------------------------- #
+# Reading credentials out of a sentence
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "message",
+    [
+        "http://localhost:3000 user: std.user pass: Passw0rd!",
+        "automate http://localhost:3000 username=std.user password=Passw0rd!",
+        "http://localhost:3000 login: std.user, password: Passw0rd!",
+    ],
+)
+def test_credentials_are_read_and_removed(message: str) -> None:
+    """The cleaned text is what gets stored as the run's instruction.
+
+    Which makes this the only thing standing between a typed password and a
+    permanent record of it in a database every dashboard query reads.
+    """
+    cleaned, credentials = parse(message)
+
+    assert credentials is not None
+    assert credentials.username == "std.user"
+    assert credentials.password == "Passw0rd!"
+    assert "Passw0rd!" not in cleaned
+    assert "http://localhost:3000" in cleaned
+
+
+def test_a_slash_pair_is_read_only_after_a_credential_word() -> None:
+    cleaned, credentials = parse("https://app.test sign in with alice / hunter2")
+    assert credentials is not None and credentials.username == "alice"
+    assert "hunter2" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "automate https://shop.example.com",
+        "automate the login page and the checkout flow",
+        "cover the sign-in form and the dashboard",
+    ],
+)
+def test_nothing_is_mistaken_for_credentials(message: str) -> None:
+    """Labelled forms only.
+
+    Two bare tokens near a URL are far more often a stray word than a password,
+    and guessing wrong means typing somebody's sentence into a login form.
+    """
+    cleaned, credentials = parse(message)
+    assert credentials is None
+    assert cleaned == message
+
+
+def test_a_password_never_appears_in_a_repr() -> None:
+    """A dataclass repr in a traceback is how secrets escape.
+
+    It happens at exactly the moment nobody is thinking about secrets.
+    """
+    text = repr(AppCredentials(username="alice", password="hunter2"))
+    assert "hunter2" not in text
+    assert "alice" in text
+
+
+def test_credentials_are_stored_beside_the_project_and_git_ignored(tmp_path: Path) -> None:
+    """Not in the control-plane database: it is shared, backed up, and has no
+    encryption to offer a password."""
+    saved = save(tmp_path, AppCredentials(username="alice", password="hunter2"))
+
+    assert saved.is_file()
+    assert json.loads(saved.read_text(encoding="utf-8"))["username"] == "alice"
+
+    # One `git add -A` away from a public repository otherwise, and the person
+    # who typed it into a chat panel has no reason to expect a file was created.
+    ignore = (tmp_path / ".aiqa" / ".gitignore").read_text(encoding="utf-8")
+    assert "credentials.json" in ignore
+
+    loaded = load(tmp_path)
+    assert loaded is not None and loaded.password == "hunter2"
+
+
+def test_the_environment_wins_over_the_file(tmp_path: Path, monkeypatch) -> None:
+    """A CI job sets variables rather than writing secrets into a checkout."""
+    save(tmp_path, AppCredentials(username="from-file", password="file"))
+    monkeypatch.setenv("AIQA_APP_USERNAME", "from-env")
+    monkeypatch.setenv("AIQA_APP_PASSWORD", "env")
+
+    loaded = load(tmp_path)
+    assert loaded is not None and loaded.username == "from-env"
+
+
+def test_no_credentials_is_not_an_error(tmp_path: Path) -> None:
+    assert load(tmp_path) is None
+
+
+# --------------------------------------------------------------------------- #
+# What the crawler must refuse to do
+# --------------------------------------------------------------------------- #
+def test_the_crawler_never_follows_a_link_that_ends_its_session() -> None:
+    """Clicking Log out mid-crawl turns every later page into the login screen.
+
+    Which looks exactly like an application with one page, rather than like an
+    error — so nothing downstream would have questioned it.
+    """
+    from tools.playwright.explorer_script import EXPLORER_MJS
+
+    assert "SESSION_ENDING" in EXPLORER_MJS
+    assert "if (SESSION_ENDING.test(next.pathname)) continue;" in EXPLORER_MJS
+
+
+def test_a_sign_in_is_verified_rather_than_assumed() -> None:
+    """Submitting a form is not the same as being signed in.
+
+    A crawler that assumes success walks away with a session it does not have
+    and reports one page five times as a five-page application.
+    """
+    from tools.playwright.explorer_script import EXPLORER_MJS
+
+    assert "sign-in failed: still on a page with a password field" in EXPLORER_MJS
+    # And the sign-in page itself is captured before we leave it, or the most
+    # important flow in the product ends up with no coverage and no page.
+    assert "Record the sign-in page before leaving it" in EXPLORER_MJS
+
+
+def test_a_failed_sign_in_blocks_the_run() -> None:
+    """Credentials were given and refused, so the application is unexplored.
+
+    Whatever was produced describes the login page, not the thing somebody
+    asked to have automated.
+    """
+    from agents.base import AgentContext
+    from agents.orchestrator.graph import terminal_status
+    from packages.aiqa_types.enums import RunMode
+    from packages.aiqa_types.models import Project
+
+    ctx = AgentContext(
+        run_id="r",
+        project=Project(org_id="o", name="p", repository_path="."),
+        instruction="http://app.test",
+        mode=RunMode.FULL,
+    )
+    ctx.metadata["sign_in_failed"] = "still on a page with a password field"
+
+    assert terminal_status(ctx) is RunStatus.BLOCKED
+
+
+# --------------------------------------------------------------------------- #
+# Scenarios from evidence
+# --------------------------------------------------------------------------- #
+LOGIN = {
+    "route": "/login",
+    "title": "Sign in - Acme",
+    "forms": [{"action": "/login", "method": "post"}],
+    "elements": [
+        {"name": "Username", "role": "textbox", "locator": "getByTestId('u')",
+         "confidence": 0.98, "required": True},
+        {"name": "Password", "role": "textbox", "locator": "getByTestId('p')",
+         "confidence": 0.98, "required": True, "input_type": "password"},
+    ],
+}
+NEW_RESIDENT = {
+    "route": "/residents/new",
+    "title": "Add resident - Acme",
+    "forms": [{"action": "/residents/new", "method": "post"}],
+    "elements": [
+        {"name": "Full name", "role": "textbox", "locator": "getByTestId('n')",
+         "confidence": 0.98, "required": True},
+        {"name": "Email", "role": "textbox", "locator": "getByTestId('e')",
+         "confidence": 0.98, "required": True},
+        {"name": "Notes", "role": "textbox", "locator": "getByTestId('no')", "confidence": 0.98},
+    ],
+}
+DASHBOARD = {"route": "/dashboard", "title": "Dashboard - Acme", "elements": []}
+
+
+def _plan(*pages: dict):
+    app_map = ApplicationMap(
+        base_url="http://app.test", pages={page["route"]: page for page in pages}
+    )
+    return plan_from_features(derive_features(app_map), base_url="http://app.test")
+
+
+def _all_steps(plan) -> list[str]:
+    return [
+        step.render()
+        for spec in plan.features
+        for scenario in spec.scenarios
+        for step in scenario.steps
+    ]
+
+
+def test_nothing_is_asserted_that_the_crawl_did_not_see() -> None:
+    """The rule the whole design rests on.
+
+    A model handed the same features produced "the resident should exist in the
+    database" for an application with no database step and no connection, and
+    "the reports page should load", which asserts nothing whatsoever.
+    """
+    steps = " | ".join(_all_steps(_plan(LOGIN, NEW_RESIDENT, DASHBOARD))).lower()
+
+    for invention in ("database", "should exist", "success message", "email is sent"):
+        assert invention not in steps, invention
+
+
+def test_every_assertion_names_a_route_or_a_title_that_was_observed() -> None:
+    plan = _plan(LOGIN, NEW_RESIDENT, DASHBOARD)
+    observed = {"/login", "/residents/new", "/dashboard"}
+
+    for spec in plan.features:
+        for scenario in spec.scenarios:
+            for step in scenario.steps:
+                if step.keyword != "Then":
+                    continue
+                text = step.text
+                assert any(route in text for route in observed) or "title is" in text or "row" in text, text
+
+
+def test_a_data_driven_scenario_has_a_real_examples_table() -> None:
+    """The previous generator emitted `{string}` — a Cucumber *expression*
+    placeholder — into the feature file with no Examples at all, which does not
+    parse as Gherkin."""
+    plan = _plan(NEW_RESIDENT)
+    outline = next(
+        scenario
+        for spec in plan.features
+        for scenario in spec.scenarios
+        if scenario.data_driven
+    )
+
+    assert outline.examples == [{"field": "Full name"}, {"field": "Email"}]
+    gherkin = plan.features[0].to_gherkin()
+    assert "<field>" in gherkin
+    assert "{string}" not in gherkin
+    assert "Examples:" in gherkin
+
+
+def test_the_sign_in_flow_is_covered_both_ways() -> None:
+    plan = _plan(LOGIN)
+    names = [s.name for spec in plan.features for s in spec.scenarios]
+
+    assert "Sign in with valid credentials" in names
+    assert "Reject an incorrect password" in names
+
+
+def test_actions_use_the_field_names_the_application_showed_us() -> None:
+    """A step naming a real field binds to a real locator.
+
+    Steps written from imagination bind to nothing, which is how a suite ends up
+    full of blocked steps that do not run.
+    """
+    steps = _all_steps(_plan(NEW_RESIDENT))
+
+    assert 'I fill in "Full name" with "QA Autopilot"' in " | ".join(steps)
+    assert 'I fill in "Email" with "qa.autopilot@example.com"' in " | ".join(steps)
+
+
+def test_a_list_with_a_filter_box_is_a_list_not_a_form() -> None:
+    """Checking for a form first made every index page a "form submission"
+    whose one field was the search box, and the rows went untested."""
+    listing = {
+        "route": "/residents",
+        "title": "Residents",
+        "forms": [{"action": "/residents", "method": "get"}],
+        "elements": [
+            {"name": "Search residents", "role": "textbox", "locator": "getByTestId('q')",
+             "confidence": 0.95},
+            {"name": "row-1", "role": "row", "locator": "getByRole('row')", "confidence": 0.95},
+        ],
+    }
+    features = derive_features(
+        ApplicationMap(base_url="http://app.test", pages={"/residents": listing})
+    )
+    assert [f.kind for f in features] == [KIND_LISTING]
+
+
+def test_a_create_form_is_still_a_form() -> None:
+    features = derive_features(
+        ApplicationMap(base_url="http://app.test", pages={"/residents/new": NEW_RESIDENT})
+    )
+    assert [f.kind for f in features] == [KIND_FORM]
+
+
+def test_each_feature_is_planned_once() -> None:
+    """Three separate feature files each testing sign-in is what the model did."""
+    plan = _plan(LOGIN, NEW_RESIDENT, DASHBOARD)
+    auth_files = [
+        spec for spec in plan.features
+        if any("sign in" in s.name.lower() for s in spec.scenarios)
+    ]
+    assert len(auth_files) == 1
+
+    ids = [s.test_id for spec in plan.features for s in spec.scenarios]
+    assert len(ids) == len(set(ids)), ids
+    assert all(ids)
+
+
+def test_the_plan_says_where_it_came_from() -> None:
+    plan = _plan(LOGIN)
+    assert "crawl" in plan.strategy.lower()
+    assert derive_features(
+        ApplicationMap(base_url="http://app.test", pages={"/login": LOGIN})
+    )[0].kind == KIND_AUTH

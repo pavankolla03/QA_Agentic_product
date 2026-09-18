@@ -31,6 +31,7 @@ from packages.aiqa_types.models import (
     WorkflowStep,
 )
 from services.discovery.autopilot import derive_features, summarise
+from services.discovery.credentials import load as load_credentials
 from services.knowledge_service.application_map import (
     ApplicationMap,
     LocatorKnowledge,
@@ -166,6 +167,7 @@ class ExplorationAgent(BaseAgent):
             ctx, "playwright.explore",
             base_url=base_url, paths=to_explore,
             max_pages=self._page_budget(ctx, to_explore),
+            credentials=self._credentials(ctx),
         )
         if not result.ok:
             ctx.warn(f"exploration failed: {result.error[:250]}")
@@ -185,6 +187,24 @@ class ExplorationAgent(BaseAgent):
         # came from nothing and nobody was told.
         probe_errors = [str(e) for e in data.get("errors", []) if str(e).strip()]
         browser = str(data.get("browser", "") or "")
+
+        # Credentials were offered and the sign-in did not take. Everything the
+        # crawl reached is therefore the login page wearing different URLs, and
+        # a plan built from it would describe an application nobody has seen.
+        # This is the failure most worth being loud about: it looks exactly like
+        # a small application rather than like an error.
+        if ctx.credentials is not None and not data.get("signed_in"):
+            detail = next(
+                (error for error in probe_errors if error.lower().startswith("sign-in")),
+                "the crawler could not confirm it was signed in",
+            )
+            ctx.warn(
+                f"could not sign in to {base_url} as {ctx.credentials.username}: {detail}. "
+                "Everything behind the login is unexplored, so nothing here describes it."
+            )
+            ctx.metadata["sign_in_failed"] = detail[:300]
+        elif data.get("signed_in"):
+            ctx.note(f"signed in as {ctx.credentials.username}; crawling the application behind it")
         if browser:
             ctx.note(f"explored with {browser}")
         # Crawling nothing is only a problem when nothing is *known*. A run
@@ -239,6 +259,24 @@ class ExplorationAgent(BaseAgent):
         self._finish(ctx, app_map)
 
     # ------------------------------------------------------------------ #
+    def _credentials(self, ctx: AgentContext) -> dict[str, Any] | None:
+        """The account to crawl as, if this project has one.
+
+        Everything worth testing in a real application is behind a sign-in.
+        Without credentials the crawler follows every navigation link, is
+        redirected to the login page each time, and records the same page over
+        and over — which is an application with one screen as far as anything
+        downstream can tell.
+        """
+        credentials = ctx.credentials or load_credentials(ctx.project_root)
+        if credentials is None or not credentials.usable:
+            return None
+        ctx.credentials = credentials
+        # The username identifies the session and is worth having in the log;
+        # the password is not mentioned here or anywhere else.
+        ctx.note(f"signing in as {credentials.username} before crawling")
+        return credentials.as_browser_payload()
+
     @staticmethod
     def _page_budget(ctx: AgentContext, to_explore: list[str]) -> int:
         """How many pages this crawl may visit.

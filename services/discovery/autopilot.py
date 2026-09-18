@@ -145,6 +145,14 @@ def _features_of(page: PageKnowledge) -> list[DiscoveredFeature]:
 
     if page.forms and _has_password(inputs):
         return [_authentication(page, label, inputs, required)]
+
+    # A list with a filter box on it is a list. Checking for a form first made
+    # every index page in the application a "form submission" whose one field
+    # was the search box, and the rows — the actual content, and the only thing
+    # on the page worth asserting about — went untested.
+    if _renders_rows(locators) and not _is_data_entry(inputs):
+        return [_listing(page, label, locators)]
+
     if page.forms and inputs:
         return [_form(page, label, inputs, required)]
     if _is_search(inputs):
@@ -314,6 +322,16 @@ def _is_password(locator: Any) -> bool:
 
 def _is_search(inputs: list[Any]) -> bool:
     return any(_looks_like(loc, _SEARCH_HINTS) for loc in inputs)
+
+
+def _is_data_entry(inputs: list[Any]) -> bool:
+    """Is this a form for entering a record, rather than filtering a view?
+
+    A create or edit form has several fields, or a required one. A filter box
+    has neither, and it is the only input on a page otherwise full of rows.
+    """
+    meaningful = [loc for loc in inputs if not _looks_like(loc, _SEARCH_HINTS)]
+    return len(meaningful) > 1 or any(getattr(loc, "required", False) for loc in inputs)
 
 
 def _renders_rows(locators: list[Any]) -> bool:

@@ -102,6 +102,15 @@ class AgentContext:
     toolchain: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    #: Credentials for the application under test.
+    #:
+    #: Alongside the knowledge layer above and for the same reason: `metadata`
+    #: is JSON-serialized onto the run row, and a password does not belong in a
+    #: database that every dashboard query reads. This is loaded from the
+    #: project's own .aiqa/ directory at the start of a run, handed to the
+    #: browser, and never written anywhere else.
+    credentials: Any = None
+
     # ------------------------------------------------------------------ #
     @property
     def project_root(self) -> str:

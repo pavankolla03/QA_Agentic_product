@@ -16,9 +16,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import secrets
 import threading
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+#: Live sessions, by cookie value.
+#:
+#: The demo used to accept a login and then serve every page to anybody who
+#: asked, which made it a poor fixture for the thing it exists to exercise: a
+#: crawler that cannot sign in sees one page on a real application and the whole
+#: of this one. Hiding that gap is worse than not having a demo.
+_SESSIONS: set[str] = set()
+
+#: Reachable without signing in. Everything else redirects to the login page.
+_PUBLIC = {"/", "/login", "/health"}
 
 # Seeded accounts. A demo whose login accepts any non-empty password cannot
 # exercise a negative path, so every generated "wrong password" scenario fails
@@ -110,13 +123,30 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
     # ------------------------------------------------------------------ #
-    def _send(self, body: str, status: int = 200, content_type: str = "text/html; charset=utf-8") -> None:
+    def _send(
+        self,
+        body: str,
+        status: int = 200,
+        content_type: str = "text/html; charset=utf-8",
+        headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         payload = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        for name, value in headers or []:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(payload)
+
+    # ------------------------------------------------------------------ #
+    def _signed_in(self) -> bool:
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        morsel = cookie.get("sid")
+        return bool(morsel and morsel.value in _SESSIONS)
+
+    def _redirect(self, location: str, headers: list[tuple[str, str]] | None = None) -> None:
+        self._send("", status=302, headers=[("Location", location), *(headers or [])])
 
     def _page(self, title: str, body: str, heading_id: str = "page-heading", status: int = 200) -> None:
         self._send(_LAYOUT.format(title=title, body=body, heading_id=heading_id), status=status)
@@ -125,7 +155,16 @@ class _Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802 - stdlib contract
         route = urlparse(self.path).path.rstrip("/") or "/"
 
+        # Everything worth testing is behind the login, exactly as it is in the
+        # applications this platform is pointed at.
+        if route not in _PUBLIC and not self._signed_in():
+            self._redirect("/login")
+            return
+
         if route in ("/", "/login"):
+            if self._signed_in():
+                self._redirect("/dashboard")
+                return
             self._page("Sign in", _LOGIN.format(error=""), "login-heading")
         elif route == "/dashboard":
             self._page(
@@ -157,6 +196,10 @@ class _Handler(BaseHTTPRequestHandler):
         def field(name: str) -> str:
             return (form.get(name) or [""])[0].strip()
 
+        if route not in _PUBLIC and not self._signed_in():
+            self._redirect("/login")
+            return
+
         if route == "/login":
             username, password = field("username"), field("password")
             if not username or not password:
@@ -167,7 +210,13 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 self._page("Sign in", _LOGIN.format(error=missing), "login-heading", status=400)
             elif _USERS.get(username) == password:
-                self._page("Dashboard", '<p data-testid="welcome">Welcome back.</p>', "dashboard-heading")
+                # Post/redirect/get with a session cookie, like a real sign-in.
+                # Rendering the dashboard straight from the POST let a crawler
+                # "log in" without ever holding a session, which is not a thing
+                # that works anywhere else.
+                sid = secrets.token_urlsafe(16)
+                _SESSIONS.add(sid)
+                self._redirect("/dashboard", headers=[("Set-Cookie", f"sid={sid}; Path=/; HttpOnly")])
             else:
                 self._page(
                     "Sign in",

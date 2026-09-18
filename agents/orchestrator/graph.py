@@ -247,6 +247,11 @@ def terminal_status(ctx: AgentContext) -> RunStatus:
     which executed zero tests, was recorded as `succeeded` — and `status` is
     what CI gates on and what the dashboard colours green, not the headline.
     """
+    if ctx.metadata.get("sign_in_failed"):
+        # Credentials were supplied and refused, so everything behind the login
+        # is unexplored. Whatever was produced describes the login page, not the
+        # application somebody asked to have automated.
+        return RunStatus.BLOCKED
     if ctx.metadata.get("execution_blocked"):
         return RunStatus.BLOCKED
     if ctx.metadata.get("automation_blocked"):
