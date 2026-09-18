@@ -41,7 +41,12 @@ from services.discovery.autopilot import KIND_AUTH, KIND_LISTING, DiscoveredFeat
 _FILLABLE = ("textbox", "combobox", "checkbox", "radio", "spinbutton")
 _SUBMIT_WORDS = ("submit", "save", "sign in", "log in", "login", "create", "add", "send", "continue", "search")
 
-_ENTER_RE = re.compile(r'^I enter "(?P<value>[^"]*)" in the (?P<field>.+) field$')
+# Every step names the page it acts on. Cucumber matches by text across the
+# whole suite, so "in the Full name field" alone is one definition shared by the
+# add form and the edit form — and the second one drives the first one's field.
+_ENTER_RE = re.compile(
+    r'^I enter "(?P<value>[^"]*)" in the (?P<field>.+) field on the (?P<page>.+) page$'
+)
 _ON_PAGE_RE = re.compile(r"^I am on the (?P<page>.+) page$")
 _LEFT_RE = re.compile(r"^I am taken away from the (?P<page>.+) page$")
 _STILL_RE = re.compile(r"^I am still on the (?P<page>.+) page$")
@@ -51,6 +56,7 @@ _TITLE_RE = re.compile(r'^the page title is "(?P<title>[^"]*)"$')
 #: page object — the first that used it — and every other page's submit then
 #: clicked a button that was not on the screen and waited out the timeout.
 _SUBMIT_RE = re.compile(r"^I submit the (?P<page>.+) form$")
+_ROW_RE = re.compile(r"^I should see at least one row on the (?P<page>.+) page$")
 
 
 def generation_plan(
@@ -249,7 +255,7 @@ def _call_for(text: str, page: PagePlan) -> str | None:
         return "signIn()" if _has(page, "signIn") else None
     if text == "I sign in with an incorrect password":
         return "signInWithWrongPassword()" if _has(page, "signInWithWrongPassword") else None
-    if text == "I should see at least one row":
+    if _ROW_RE.match(text):
         return "expectAtLeastOneRow()" if _has(page, "expectAtLeastOneRow") else None
     if _LEFT_RE.match(text):
         return "expectLeft()"

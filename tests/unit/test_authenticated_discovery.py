@@ -260,14 +260,14 @@ def test_only_real_data_is_quoted() -> None:
     plan = _plan(NEW_RESIDENT)
     steps = _all_steps(plan)
 
-    assert 'When I enter "QA Autopilot" in the Full name field' in steps
+    assert 'When I enter "QA Autopilot" in the Full name field on the Add resident page' in steps
     assert not any('in "Full name"' in step for step in steps)
     # Every step shape used here is one the happy path already needs.
     assert {step.split(" ", 1)[1] for step in steps} == {
         "I am on the Add resident page",
-        'I enter "QA Autopilot" in the Full name field',
-        'I enter "qa.autopilot@example.com" in the Email field',
-        'I enter "QA autopilot" in the Notes field',
+        'I enter "QA Autopilot" in the Full name field on the Add resident page',
+        'I enter "qa.autopilot@example.com" in the Email field on the Add resident page',
+        'I enter "QA autopilot" in the Notes field on the Add resident page',
         "I submit the Add resident form",
         "I am taken away from the Add resident page",
         "I am still on the Add resident page",
@@ -312,8 +312,8 @@ def test_actions_use_the_field_names_the_application_showed_us() -> None:
     steps = _all_steps(_plan(NEW_RESIDENT))
 
     joined = " | ".join(steps)
-    assert '"QA Autopilot" in the Full name field' in joined
-    assert '"qa.autopilot@example.com" in the Email field' in joined
+    assert '"QA Autopilot" in the Full name field on the Add resident page' in joined
+    assert '"qa.autopilot@example.com" in the Email field on the' in joined
 
 
 def test_a_list_with_a_filter_box_is_a_list_not_a_form() -> None:
@@ -487,7 +487,7 @@ def test_a_dropdown_is_filled_with_one_of_its_own_options() -> None:
     plan = _plan(WITH_DROPDOWN)
     steps = _all_steps(plan)
 
-    assert 'I enter "owner" in the Resident type field' in " | ".join(steps)
+    assert 'I enter "owner" in the Resident type field on the' in " | ".join(steps)
     assert "QA autopilot" not in " | ".join(
         step for step in steps if "Resident type" in step
     )

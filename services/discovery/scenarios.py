@@ -210,7 +210,7 @@ def _form(feature: DiscoveredFeature) -> list[Scenario]:
                 # The field is part of the sentence, the value is the parameter.
                 # Quoting the field name would collapse every one of these into
                 # a single step matching all of them and binding to none.
-                text=f'I enter "{_value_for(feature, field)}" in the {field} field',
+                text=f'I enter "{_value_for(feature, field)}" in the {field} field on the {page} page',
             )
         )
     steps.append(GherkinStep(keyword="And", text=f"I submit the {page} form"))
@@ -262,7 +262,7 @@ def _required_field_scenarios(feature: DiscoveredFeature) -> list[Scenario]:
             steps.append(
                 GherkinStep(
                     keyword="When" if first else "And",
-                    text=f'I enter "{_value_for(feature, field)}" in the {field} field',
+                    text=f'I enter "{_value_for(feature, field)}" in the {field} field on the {page} page',
                 )
             )
             first = False
@@ -292,7 +292,7 @@ def _listing(feature: DiscoveredFeature) -> list[Scenario]:
             layer=TestLayer.UI,
             steps=[
                 GherkinStep(keyword="Given", text=f"I am on the {_page_name(feature)} page"),
-                GherkinStep(keyword="Then", text="I should see at least one row"),
+                GherkinStep(keyword="Then", text=f"I should see at least one row on the {_page_name(feature)} page"),
             ],
         )
     ]
@@ -326,7 +326,7 @@ def _search(feature: DiscoveredFeature) -> list[Scenario]:
             layer=TestLayer.UI,
             steps=[
                 GherkinStep(keyword="Given", text=f"I am on the {page} page"),
-                GherkinStep(keyword="When", text=f'I enter "{_DEFAULT_SAMPLE}" in the {box} field'),
+                GherkinStep(keyword="When", text=f'I enter "{_DEFAULT_SAMPLE}" in the {box} field on the {page} page'),
                 GherkinStep(keyword="And", text=f"I submit the {page} form"),
                 GherkinStep(keyword="Then", text=f"I am still on the {page} page"),
             ],
