@@ -52,7 +52,12 @@ from services.discovery.autopilot import (
 #: Sample values by field name. Only ever used to *fill* a field, never to
 #: assert anything, so being wrong costs a re-run and not a false result.
 _SAMPLES: tuple[tuple[str, str], ...] = (
-    (r"e-?mail", "qa.autopilot@example.com"),
+    # `{unique}` is expanded per execution by the step definition. A created
+    # record usually carries a uniqueness constraint, and a fixed value makes
+    # the happy path pass exactly once: the second run is rejected as a
+    # duplicate, the form stays put, and the test fails for a reason that has
+    # nothing to do with the application being wrong.
+    (r"e-?mail", "qa.autopilot+{unique}@example.com"),
     (r"phone|mobile|tel", "5550100"),
     (r"zip|postcode|postal", "12345"),
     (r"unit|flat|apartment|room", "A-101"),

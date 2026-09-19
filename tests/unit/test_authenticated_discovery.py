@@ -266,7 +266,7 @@ def test_only_real_data_is_quoted() -> None:
     assert {step.split(" ", 1)[1] for step in steps} == {
         "I am on the Add resident page",
         'I enter "QA Autopilot" in the Full name field on the Add resident page',
-        'I enter "qa.autopilot@example.com" in the Email field on the Add resident page',
+        'I enter "qa.autopilot+{unique}@example.com" in the Email field on the Add resident page',
         'I enter "QA autopilot" in the Notes field on the Add resident page',
         "I submit the Add resident form",
         "I am taken away from the Add resident page",
@@ -313,7 +313,10 @@ def test_actions_use_the_field_names_the_application_showed_us() -> None:
 
     joined = " | ".join(steps)
     assert '"QA Autopilot" in the Full name field on the Add resident page' in joined
-    assert '"qa.autopilot@example.com" in the Email field on the' in joined
+    # `{unique}` is expanded per execution by the generated step definition: a
+    # created record carries a uniqueness constraint, and a fixed address makes
+    # the happy path pass exactly once.
+    assert '"qa.autopilot+{unique}@example.com" in the Email field on the' in joined
 
 
 def test_a_list_with_a_filter_box_is_a_list_not_a_form() -> None:

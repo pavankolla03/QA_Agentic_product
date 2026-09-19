@@ -522,6 +522,12 @@ def _resolve_page(step: StepPlan, real_classes: set[str]) -> StepPlan:
     return step
 
 
+#: Replaced with a per-execution value by the generated step definition.
+#: Written in the feature file so a reviewer can see that the value varies,
+#: rather than discovering it only in the step code.
+UNIQUE_TOKEN = "{unique}"
+
+
 def _one_per_expression(steps: list[StepPlan]) -> list[StepPlan]:
     """Collapse steps that would define the same Cucumber expression.
 
@@ -603,6 +609,17 @@ def render_steps(
     ]
     for page in used_pages:
         lines.append(f"import {{ {page} }} from '{pages_import_path}/{page}';")
+    if any(UNIQUE_TOKEN in step.text for step in steps):
+        # Expanded per execution. A create form usually has a uniqueness
+        # constraint, so a literal value in the feature file makes the happy
+        # path pass exactly once — the next run is rejected as a duplicate and
+        # the failure points at the application rather than at the fixture.
+        lines.append(
+            f"const unique = (value: string): string => "
+            f"value.split('{UNIQUE_TOKEN}').join(String(Date.now()));"
+        )
+        lines.append("")
+
     lines.append("")
     for page in used_pages:
         # `!` is the definite-assignment assertion, and it is required rather
@@ -655,7 +672,12 @@ def render_steps(
             lines.append(f"  //   Its methods are: {available}")
             lines.append(_pending())
         elif step.call and step.page:
-            call = _bind_call(step.call, params, signatures.get((step.page, _call_name(step.call))))
+            expanded = (
+                [f"unique({name})" for name in params]
+                if UNIQUE_TOKEN in step.text
+                else params
+            )
+            call = _bind_call(step.call, expanded, signatures.get((step.page, _call_name(step.call))))
             if call is None:
                 # The method needs a value this step does not supply. Emitting
                 # the call anyway would reference an undefined identifier, so

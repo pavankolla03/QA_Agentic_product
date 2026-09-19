@@ -880,3 +880,56 @@ def test_a_meaningful_parameter_name_is_kept() -> None:
     )
     assert "async fillEmail(email: string)" in render_page_object(plan)
 
+
+# --------------------------------------------------------------------------- #
+# Data a second run can reuse
+# --------------------------------------------------------------------------- #
+def test_a_unique_value_is_expanded_per_execution() -> None:
+    """A create form usually has a uniqueness constraint.
+
+    A literal email in the feature file makes the happy path pass exactly once:
+    the next run is rejected as a duplicate, the form stays put, and the failure
+    points at the application rather than at the fixture. A real run failed
+    precisely this way, against a record an earlier run had created.
+    """
+    page = PagePlan(
+        class_name="AddResidentPage",
+        route="/residents/new",
+        locators={"email": "getByTestId('e')"},
+        methods=[MethodPlan(name="enterEmail", kind="action", params=["value"], locators=["email"])],
+    )
+    steps = [
+        StepPlan(
+            text='I enter "qa.autopilot+{unique}@example.com" in the Email field on the Add page',
+            keyword="When",
+            page="AddResidentPage",
+            call="enterEmail(value1)",
+        )
+    ]
+    source = render_steps(steps, [page])
+
+    assert "const unique = " in source
+    assert "enterEmail(unique(value1))" in source
+
+
+def test_a_step_without_the_token_is_left_alone() -> None:
+    """The helper is only emitted where it is used.
+
+    An unused declaration fails `noUnusedLocals`, which would take the whole
+    file with it.
+    """
+    page = PagePlan(
+        class_name="AddResidentPage",
+        route="/residents/new",
+        locators={"name": "getByTestId('n')"},
+        methods=[MethodPlan(name="enterName", kind="action", params=["value"], locators=["name"])],
+    )
+    steps = [
+        StepPlan(text='I enter "Ada" in the Name field on the Add page', keyword="When",
+                 page="AddResidentPage", call="enterName(value1)")
+    ]
+    source = render_steps(steps, [page])
+
+    assert "const unique" not in source
+    assert "enterName(value1)" in source
+
