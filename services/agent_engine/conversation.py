@@ -54,6 +54,13 @@ GREETING = (
 
 _SUGGESTIONS = ["automate the login page", "how many tests failed?", "what did today cost?"]
 
+#: Statuses where the run is not over, whatever else is true of it. A run at an
+#: approval gate is waiting for a person, not finished.
+_IN_FLIGHT = frozenset(
+    {RunStatus.QUEUED.value, RunStatus.RUNNING.value, RunStatus.WAITING_APPROVAL.value,
+     RunStatus.PAUSED.value}
+)
+
 
 @dataclass
 class Answer:
@@ -129,6 +136,18 @@ class ConversationService:
                 f"Run {run['id']} did not get as far as running tests.\n\n{run['error'][:400]}"
             )
         if not run["tests_total"]:
+            # A run that has not reached execution has not "finished" anything.
+            # Saying it did, of a run sitting at an approval gate, is a small
+            # lie that reads as a large one: the person asked what failed and
+            # was told the work was over.
+            if run["status"] in _IN_FLIGHT:
+                stage = (run["current_agent"] or "starting").replace("_", " ")
+                waiting = run["status"] == RunStatus.WAITING_APPROVAL.value
+                return Answer(
+                    f"Run {run['id']} has not executed any tests yet — it is "
+                    + ("waiting for your approval" if waiting else f"still {stage}")
+                    + ". Nothing has failed because nothing has run."
+                )
             return Answer(
                 f"Run {run['id']} did not execute any tests, so there are no failures to report. "
                 f"It finished as {run['status']}."

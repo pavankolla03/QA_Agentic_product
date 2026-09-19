@@ -226,3 +226,57 @@ def test_streaming_never_switches_model_mid_answer() -> None:
     assert "if produced:" in stream and "return" in stream, (
         "a failure after the first token must stop, not restart elsewhere"
     )
+
+
+def test_a_run_at_an_approval_gate_has_not_finished(project) -> None:  # noqa: ANN001
+    """It said "It finished as waiting_approval", which is a contradiction.
+
+    The person asked what had failed and was told the work was over, of a run
+    that was sitting still waiting for them.
+    """
+    from packages.aiqa_types.enums import RunStatus
+    from services.agent_engine.intents import Intent, Resolution
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+
+    with session_scope() as session:
+        session.add(
+            RunRow(
+                id="run_gate", project_id=project.id, instruction="http://app.test",
+                mode="full", status=RunStatus.WAITING_APPROVAL.value,
+                current_agent="test_design", tests_total=0,
+            )
+        )
+
+    answer = ConversationService(project_id=project.id).answer(
+        Resolution(Intent.RUN_FAILURE_QUERY, run_id="run_gate")
+    )
+
+    assert answer is not None
+    assert "finished" not in answer.text
+    assert "waiting for your approval" in answer.text
+
+
+def test_a_running_run_says_what_stage_it_is_at(project) -> None:  # noqa: ANN001
+    from packages.aiqa_types.enums import RunStatus
+    from services.agent_engine.intents import Intent, Resolution
+    from services.observability.db import session_scope
+    from services.observability.models import RunRow
+
+    with session_scope() as session:
+        session.add(
+            RunRow(
+                id="run_midway", project_id=project.id, instruction="http://app.test",
+                mode="full", status=RunStatus.RUNNING.value,
+                current_agent="exploration", tests_total=0,
+            )
+        )
+
+    answer = ConversationService(project_id=project.id).answer(
+        Resolution(Intent.RUN_FAILURE_QUERY, run_id="run_midway")
+    )
+
+    assert answer is not None
+    assert "finished" not in answer.text
+    assert "still exploration" in answer.text
+
