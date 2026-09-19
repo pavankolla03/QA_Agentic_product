@@ -330,6 +330,9 @@ SQLite by default; PostgreSQL is a connection-string change.
 
 ## Documentation
 
+- **[Handover](docs/HANDOVER.md)** — what works, what does not, and what to build
+  next. Start here if you are new to the project.
+- **[Pipeline](docs/PIPELINE.md)** — how a run actually flows, stage by stage
 - **[Manual testing guide](docs/MANUAL_TESTING.md)** — the configured setup on this machine, start to finish
 - **[Getting started](docs/GETTING_STARTED.md)** — clone to first suite in ~10 minutes
 - **[Cost optimization](docs/cost-optimization.md)** — how the spend is controlled, and how to tune it
