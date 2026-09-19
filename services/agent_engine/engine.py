@@ -46,6 +46,8 @@ from packages.aiqa_types.models import (
     TestPlan,
     new_id,
 )
+from services.discovery.credentials import parse as parse_credentials
+from services.discovery.credentials import save as save_credentials
 from services.model_router.router import BudgetExceeded, ModelRouter, RunBudget
 from services.observability.db import session_scope
 from services.observability.models import ApprovalRow, ProjectRow, RunEventRow, RunRow
@@ -181,6 +183,7 @@ class AgentEngine:
     # ------------------------------------------------------------------ #
     def create_run(self, request: RunRequest, user_id: str = "", org_id: str = "") -> str:
         project = self._load_project(request.project_id)
+        request = self._without_credentials(request, project)
 
         governor = CostGovernor(org_id or project.org_id)
         allowed, reason = governor.check()
@@ -362,6 +365,27 @@ class AgentEngine:
         return done
 
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _without_credentials(request: RunRequest, project: Project) -> RunRequest:
+        """Take any account out of the instruction before the row is written.
+
+        The gateway already does this, and doing it again here is deliberate.
+        `instruction` is written to the database, replayed in the sidebar,
+        shown in every report and read back by the chat — so the cost of one
+        entry point forgetting is a password stored in plain text forever, and
+        the cost of doing it twice is a regex on a short string. Every path that
+        can create a run passes through here, including the REST API and the
+        CLI, neither of which goes near the gateway.
+        """
+        cleaned, credentials = parse_credentials(request.instruction or "")
+        if credentials is None or not credentials.usable:
+            return request
+        try:
+            save_credentials(project.repository_path, credentials)
+        except Exception:  # noqa: BLE001 - never fail a run over bookkeeping
+            log.warning("could not store credentials for project %s", project.id, exc_info=True)
+        return request.model_copy(update={"instruction": cleaned or request.instruction})
+
     def reconcile_interrupted_runs(self) -> int:
         """Fail runs whose process is gone. Returns how many.
 

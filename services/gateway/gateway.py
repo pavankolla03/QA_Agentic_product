@@ -98,9 +98,15 @@ class Gateway:
         if project_id != session.project_id:
             self.sessions.bind_project(session.key, project_id)
 
+        # An account in the message is saved beside the project and taken out of
+        # the text before the text becomes a permanent record. `resolve` already
+        # separated them; this is where the secret is allowed to touch disk.
+        if resolution.credentials is not None and resolution.credentials.usable:
+            self._remember_credentials(project_id, resolution.credentials)
+
         request = RunRequest(
             project_id=project_id,
-            instruction=text,
+            instruction=resolution.instruction or text,
             mode=resolution.mode,
             target_url=resolution.target_url or None,
             metadata={
@@ -138,6 +144,29 @@ class Gateway:
             autopilot=resolution.intent is Intent.RUN_AUTOPILOT,
             text=self._starting(envelope.channel, resolution, run_id),
         )
+
+    @staticmethod
+    def _remember_credentials(project_id: str, credentials) -> None:
+        """Store the account in the project it belongs to.
+
+        Not in the control-plane database: it is shared, it is backed up, every
+        dashboard query reads it, and there is no encryption at rest to offer a
+        password. The project directory is on the machine that already holds the
+        application's source, and the file is git-ignored when it is created.
+        """
+        from services.discovery.credentials import save
+        from services.observability.db import session_scope
+        from services.observability.models import ProjectRow
+
+        try:
+            with session_scope() as db:
+                project = db.get(ProjectRow, project_id)
+                root = project.repository_path if project else ""
+            if root:
+                save(root, credentials)
+                log.info("stored credentials for %s as %s", project_id, credentials.username)
+        except Exception:  # noqa: BLE001 - a run must not fail over bookkeeping
+            log.warning("could not store credentials for %s", project_id, exc_info=True)
 
     async def _ask_a_model(self, envelope: CommandEnvelope, session: Session, text: str) -> Reply:
         try:

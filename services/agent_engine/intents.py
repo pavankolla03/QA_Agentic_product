@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from packages.aiqa_types.enums import RunMode
+from services.discovery.credentials import AppCredentials
+from services.discovery.credentials import parse as parse_credentials
 from services.discovery.urls import URL_RE, extract_url, is_bare_url_request
 
 
@@ -115,6 +117,16 @@ class Resolution:
     #: whatever the intent - "automate the login page at https://x" is a
     #: RUN_CREATE that still knows where to look.
     target_url: str = ""
+    #: An account found in the message, already removed from `instruction`.
+    #:
+    #: Carried rather than stored, because resolving a message is pure and
+    #: writing a secret to disk is not. Whoever starts the run decides where it
+    #: goes.
+    credentials: AppCredentials | None = None
+    #: The message with any credentials taken out - what becomes the run's
+    #: instruction and what every UI shows afterwards. The only thing standing
+    #: between a typed password and a permanent record of it.
+    instruction: str = ""
 
     @property
     def mode(self) -> RunMode:
@@ -188,8 +200,17 @@ def _normalise(message: str) -> str:
 
 
 def resolve(message: str) -> Resolution:
-    """Name what this message wants, without a model wherever possible."""
-    run_id = (_RUN_ID_RE.search(message or "") or [None])[0] if message else None
+    """Name what this message wants, without a model wherever possible.
+
+    Credentials come out first. "http://localhost:8123 user: qa pass: ..." is a
+    request to automate that application, but with the account still in the
+    sentence it classifies as UNKNOWN, falls through to a model, and comes back
+    as a polite refusal to visit URLs — the headline feature failing because of
+    two words at the end of the line.
+    """
+    message, credentials = parse_credentials(message or "")
+
+    run_id = (_RUN_ID_RE.search(message) or [None])[0] if message else None
     run_id = run_id if isinstance(run_id, str) else ""
 
     target_url = extract_url(message or "")
@@ -199,10 +220,13 @@ def resolve(message: str) -> Resolution:
         # A URL with nothing meaningful around it. There is no requirement to
         # interpret, so the application itself becomes the requirement: crawl
         # it, name what is there, automate that.
-        return Resolution(Intent.RUN_AUTOPILOT, run_id=run_id, target_url=target_url)
+        resolution = Resolution(Intent.RUN_AUTOPILOT, run_id=run_id, target_url=target_url)
+    else:
+        resolution = _classify(text, run_id)
+        resolution.target_url = target_url
 
-    resolution = _classify(text, run_id)
-    resolution.target_url = target_url
+    resolution.credentials = credentials
+    resolution.instruction = message
     return resolution
 
 

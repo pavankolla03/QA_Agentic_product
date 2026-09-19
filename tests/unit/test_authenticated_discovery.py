@@ -603,3 +603,66 @@ def test_a_filter_box_is_a_search_not_a_form_submission() -> None:
     assert "Then I am still on the Residents page" in steps
     assert not any("taken away" in step for step in steps)
 
+
+# --------------------------------------------------------------------------- #
+# The credentials have to reach the run
+# --------------------------------------------------------------------------- #
+def test_a_url_with_credentials_is_still_a_request_to_automate_it() -> None:
+    """The headline flow, and it was broken.
+
+    `parse()` existed and was tested, and nothing in the run path called it. So
+    "http://localhost:8123 user: qa pass: ..." classified as UNKNOWN, fell
+    through to a model, and came back as a polite refusal to visit URLs — the
+    feature failing because of two words at the end of the line.
+    """
+    from services.agent_engine.intents import Intent, resolve
+
+    resolution = resolve("http://localhost:8123 user: std.user pass: SuperSecret123!")
+
+    assert resolution.intent is Intent.RUN_AUTOPILOT
+    assert resolution.target_url == "http://localhost:8123"
+    assert resolution.credentials is not None
+    assert resolution.credentials.username == "std.user"
+
+
+def test_the_instruction_a_run_stores_never_holds_the_password() -> None:
+    """`instruction` is written to the database, replayed in the sidebar, shown
+    in every report and read back by the chat."""
+    from services.agent_engine.intents import resolve
+
+    resolution = resolve("http://localhost:8123 user: std.user pass: SuperSecret123!")
+
+    assert resolution.instruction == "http://localhost:8123"
+    assert "SuperSecret123!" not in resolution.instruction
+
+
+def test_an_ordinary_message_carries_no_credentials() -> None:
+    from services.agent_engine.intents import resolve
+
+    resolution = resolve("automate the login page: valid sign-in and wrong password")
+
+    assert resolution.credentials is None
+    assert resolution.instruction == "automate the login page: valid sign-in and wrong password"
+
+
+def test_every_entry_point_strips_them_not_just_the_gateway(tmp_path: Path) -> None:
+    """The REST API and the CLI never go near the gateway.
+
+    Doing it twice costs a regex on a short string; one entry point forgetting
+    costs a password stored in plain text forever.
+    """
+    from packages.aiqa_types.models import Project, RunRequest
+    from services.agent_engine.engine import AgentEngine
+
+    project = Project(org_id="o", name="p", repository_path=str(tmp_path))
+    request = RunRequest(
+        project_id="prj_1",
+        instruction="http://localhost:8123 user: std.user pass: SuperSecret123!",
+    )
+
+    cleaned = AgentEngine._without_credentials(request, project)
+
+    assert cleaned.instruction == "http://localhost:8123"
+    stored = load(tmp_path)
+    assert stored is not None and stored.password == "SuperSecret123!"
+
