@@ -254,6 +254,10 @@ def terminal_status(ctx: AgentContext) -> RunStatus:
         return RunStatus.BLOCKED
     if ctx.metadata.get("execution_blocked"):
         return RunStatus.BLOCKED
+    if ctx.metadata.get("undefined_steps"):
+        # Scenarios that never ran because a step has no definition. Not a
+        # failing test — a missing one, and this platform is what is missing it.
+        return RunStatus.BLOCKED
     if ctx.metadata.get("automation_blocked"):
         # Steps that compile but do nothing. The suite would go green while
         # verifying nothing at all, which is worse than not existing.

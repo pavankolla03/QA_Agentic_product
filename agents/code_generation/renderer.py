@@ -339,6 +339,19 @@ def _render_method_body(method: MethodPlan, plan: PagePlan) -> list[str]:
             literal = _ts_string(plan.title)
             negate = ".not" if method.expect == "left" else ""
             return [f"await expect(this.page){negate}.toHaveTitle({literal});"]
+
+        # Without a title the only thing left is the URL, and for the root path
+        # that says nothing: every URL contains "/". `not.toContain('/')` can
+        # never pass and `toContain('/')` always does — a test that fails for no
+        # reason and its twin that passes while checking nothing. The second is
+        # the worse one, so neither is written.
+        if (plan.route or "/").strip() == "/":
+            return [
+                "// TODO(aiqa): this page has no observed title and sits at the root,",
+                "//   so neither its URL nor its title can say whether we are on it.",
+                _pending(),
+            ]
+
         negate = ".not" if method.expect == "left" else ""
         return [f"expect(this.page.url()){negate}.toContain(this.path);"]
 

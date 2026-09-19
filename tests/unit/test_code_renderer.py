@@ -933,3 +933,56 @@ def test_a_step_without_the_token_is_left_alone() -> None:
     assert "const unique" not in source
     assert "enterName(value1)" in source
 
+
+# --------------------------------------------------------------------------- #
+# An assertion that cannot be wrong is not an assertion
+# --------------------------------------------------------------------------- #
+def test_the_root_page_never_gets_a_url_containment_assertion() -> None:
+    """Every URL contains "/".
+
+    So on a page whose route is the root, `not.toContain('/')` can never pass
+    and `toContain('/')` always does — a test that fails for no reason and its
+    twin that passes while checking nothing. The second is the worse one. A real
+    run generated both on its sign-in page, and the platform's own failure
+    analyst identified it: "the assertion checks that the URL does not contain
+    '/' (which is always true for any URL)".
+    """
+    plan = PagePlan(
+        class_name="SignInPage",
+        route="/",
+        locators={"username": "getByTestId('u')"},
+        methods=[
+            MethodPlan(name="expectHere", kind="page_assertion", expect="here"),
+            MethodPlan(name="expectLeft", kind="page_assertion", expect="left"),
+        ],
+    )
+    source = render_page_object(plan)
+
+    assert "toContain" not in source
+    assert "pending" in source
+
+
+def test_a_title_is_used_wherever_there_is_one() -> None:
+    """Including at the root, where it is the only thing that can distinguish it."""
+    plan = PagePlan(
+        class_name="SignInPage",
+        route="/",
+        title="Sign in - Acme Residents",
+        locators={"username": "getByTestId('u')"},
+        methods=[MethodPlan(name="expectLeft", kind="page_assertion", expect="left")],
+    )
+    source = render_page_object(plan)
+
+    assert "not.toHaveTitle('Sign in - Acme Residents')" in source
+    assert "toContain" not in source
+
+
+def test_a_deeper_route_can_still_use_the_url() -> None:
+    plan = PagePlan(
+        class_name="AddResidentPage",
+        route="/residents/new",
+        locators={"name": "getByTestId('n')"},
+        methods=[MethodPlan(name="expectHere", kind="page_assertion", expect="here")],
+    )
+    assert "toContain(this.path)" in render_page_object(plan)
+

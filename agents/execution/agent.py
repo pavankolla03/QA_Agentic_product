@@ -100,6 +100,23 @@ class ExecutionAgent(BaseAgent):
         execution.run_id = ctx.run_id
         ctx.execution = execution
 
+        # A scenario that never ran because one of its steps has no definition
+        # is not a failing test — it is a missing one. Counting it as a failure
+        # lets the run report `succeeded` on the grounds that finding failures
+        # is the job, when what actually happened is that this platform did not
+        # finish generating the suite.
+        undefined = [
+            case.test_id or case.name
+            for case in execution.results
+            if "undefined step" in (case.error_message or "").lower()
+        ]
+        if undefined:
+            ctx.metadata["undefined_steps"] = undefined[:10]
+            ctx.warn(
+                f"{len(undefined)} scenario(s) never ran — a step has no definition: "
+                + ", ".join(undefined[:4])
+            )
+
         summary = (
             f"executed {execution.total} test(s): {execution.passed} passed, "
             f"{execution.failed} failed, {execution.skipped} skipped, {execution.flaky} flaky "

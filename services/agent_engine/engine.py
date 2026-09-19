@@ -699,6 +699,20 @@ class AgentEngine:
         ctx.execution = _model_or_none(ExecutionResult, snapshot.get("execution"))
         ctx.analyses = [a for a in (_model_or_none(FailureAnalysis, x) for x in snapshot.get("analyses", [])) if a]
         ctx.heals = [h for h in (_model_or_none(HealProposal, x) for x in snapshot.get("heals", [])) if h]
+
+        # The application map is a live object, so it is not in the snapshot —
+        # but it is on disk, and a resumed run needs it as much as the original
+        # did. Without this, everything after an approval gate is generated
+        # against an empty map: page titles vanish, and the assertions that
+        # would have used them fall back to comparing URLs. On a page whose
+        # route is "/" that fallback is `expect(url).not.toContain('/')`, which
+        # can never pass, and its opposite always passes while checking nothing.
+        try:
+            from services.knowledge_service.application_map import ApplicationMap
+
+            ctx.application_map = ApplicationMap.load(project.repository_path)
+        except Exception:  # noqa: BLE001 - a missing map is a degraded run, not a failed one
+            log.debug("could not reload the application map for %s", run_id, exc_info=True)
         return ctx, tracker
 
     def _persist(self, ctx: AgentContext, tracker: RunTracker, result: GraphResult) -> None:

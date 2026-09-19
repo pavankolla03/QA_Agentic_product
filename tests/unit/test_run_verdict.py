@@ -175,3 +175,25 @@ def test_a_green_run_announces_succeeded() -> None:
 
     assert _notification_status(ctx, {"failed": 0, "product_defects": []}) == "succeeded"
 
+
+def test_a_scenario_that_never_ran_blocks_the_run() -> None:
+    """An undefined step is a missing test, not a failing one.
+
+    Counting it as a failure let a run report `succeeded` on the grounds that
+    finding failures is the job — when what actually happened is that this
+    platform did not finish generating the suite. Two scenarios in a real run
+    never executed, and the run called itself succeeded.
+    """
+    ctx = _ctx(undefined_steps=['TC-AUTO-014', 'TC-AUTO-015'])
+    ctx.execution = _execution(total=17, passed=13, failed=4)
+
+    assert terminal_status(ctx) is RunStatus.BLOCKED
+
+
+def test_real_failures_without_undefined_steps_still_succeed() -> None:
+    """Going red for a genuine defect remains the job."""
+    ctx = _ctx()
+    ctx.execution = _execution(total=17, passed=13, failed=4)
+
+    assert terminal_status(ctx) is RunStatus.SUCCEEDED
+
