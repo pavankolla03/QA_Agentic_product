@@ -110,11 +110,15 @@ def test_reconciling_twice_changes_nothing_the_second_time(engine: AgentEngine) 
 
 
 def teardown_module() -> None:
-    with session_scope() as session:
-        for row in session.execute(
-            select(RunRow).where(RunRow.id.like("run_reconcile_%"))
-        ).scalars():
-            session.delete(row)
+    from sqlalchemy.exc import OperationalError as SAOperationalError
+    try:
+        with session_scope() as session:
+            for row in session.execute(
+                select(RunRow).where(RunRow.id.like("run_reconcile_%"))
+            ).scalars():
+                session.delete(row)
+    except (SAOperationalError, Exception):
+        pass  # DB already torn down by the autouse fixture — cleanup is best-effort
 
 
 # --------------------------------------------------------------------------- #

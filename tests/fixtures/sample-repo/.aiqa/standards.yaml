@@ -1,0 +1,36 @@
+# QAgentic — Acme project standards.
+# This file overrides the organization baseline.
+# See .aiqa/README.md for precedence rules.
+
+organization: "Acme"
+
+framework:
+  language: typescript
+  runner: playwright
+  methodology: bdd
+  architecture: page-object-model
+
+locators:
+  preferred:
+    - getByTestId
+    - getByRole
+    - getByLabel
+    - getByPlaceholder
+    - getByText
+  prohibited:
+    - absolute_xpath
+
+rules:
+  - id: ACME-001
+    severity: error
+    title: "All test IDs must follow TC-XXXX format"
+    applies_to: [features, steps]
+    message: "Test IDs must use the TC- prefix followed by digits (e.g. TC-1001)."
+
+  - id: STD-006
+    severity: error
+    title: "No console.log in committed tests"
+    applies_to: [pages, steps, tests, fixtures]
+    detect: 'console\.log\('
+    message: "Use the test reporter/logger instead of console.log."
+    autofix: remove_console_log
