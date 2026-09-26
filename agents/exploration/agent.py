@@ -360,6 +360,18 @@ class ExplorationAgent(BaseAgent):
 
     @staticmethod
     def _to_page_knowledge(snapshot: PageSnapshot, simulated: bool) -> PageKnowledge:
+        # A page that carries a password field is a sign-in screen regardless of
+        # the URL it was reached at. The demo app serves the login form at
+        # /dashboard for unauthenticated visitors, which caused the generated
+        # SignInPage to navigate to /dashboard — a redirect back to the login.
+        # Normalise the route to /login so the page object points at the form.
+        has_password = any(
+            f.get("fields", {}).get("password") for f in (snapshot.forms or [])
+        )
+        route = snapshot.route_pattern or route_of(snapshot.url)
+        if has_password and route not in ("/login", "/login/:id"):
+            route = "/login"
+
         elements = [
             asdict(
                 LocatorKnowledge(
@@ -379,7 +391,7 @@ class ExplorationAgent(BaseAgent):
             if element.recommended_locator
         ]
         return PageKnowledge(
-            route=snapshot.route_pattern or route_of(snapshot.url),
+            route=route,
             url=snapshot.url,
             title=snapshot.title,
             dom_hash=dom_hash([e for e in elements]),

@@ -198,7 +198,7 @@ class ExploreAppTool(Tool):
         # locators to static HTML and the only trace was a `simulated` flag
         # nobody could explain. "Unverified" is useful; "unverified and nobody
         # knows why" is just an outage with extra steps.
-        fallback = self._explore_with_http(base_url, paths or ["/"], max_pages)
+        fallback = self._explore_with_http(base_url, paths or ["/"], max_pages, credentials)
         if fallback.ok and isinstance(fallback.data, dict):
             fallback.data.setdefault("errors", [])
             fallback.data["errors"].insert(0, f"no browser crawl: {why_not_browser[:300]}")
@@ -291,7 +291,10 @@ class ExploreAppTool(Tool):
         )
 
     # -- HTTP fallback -------------------------------------------------- #
-    def _explore_with_http(self, base_url: str, paths: list[str], max_pages: int) -> ToolResult:
+    def _explore_with_http(
+        self, base_url: str, paths: list[str], max_pages: int,
+        credentials: dict[str, Any] | None = None,
+    ) -> ToolResult:
         import httpx
 
         snapshots: list[PageSnapshot] = []
@@ -300,9 +303,21 @@ class ExploreAppTool(Tool):
         queue = list(paths)
         seen: set[str] = set()
         origin = urlparse(base_url)
+        cookie_header: dict[str, str] = {}
+        login_tried = False
+        login_form_path = ""
+        signed_in = False
+
+        def _signed_in_candidate(text: str) -> bool:
+            """Heuristic: did the response look like a page *behind* the login?
+
+            The login page always has a password field. A page that does not is
+            likely the dashboard or a listing — i.e. the session worked.
+            """
+            return "password" not in text.lower() or "logout" in text.lower()
 
         try:
-            with httpx.Client(timeout=15.0, follow_redirects=True, verify=False) as client:
+            with httpx.Client(timeout=15.0, follow_redirects=False, verify=False) as client:
                 while queue and len(snapshots) < max_pages:
                     path = queue.pop(0)
                     url = path if path.startswith("http") else urljoin(base_url, path)
@@ -310,10 +325,20 @@ class ExploreAppTool(Tool):
                         continue
                     seen.add(url)
                     try:
-                        resp = client.get(url)
+                        resp = client.get(url, headers=cookie_header)
                     except httpx.HTTPError as exc:
                         unreachable.append(url)
                         errors.append(f"{url}: {exc}")
+                        continue
+                    # track cookies from Set-Cookie headers
+                    for sc in resp.headers.get_list("Set-Cookie"):
+                        name = sc.split("=", 1)[0].strip()
+                        cookie_header[name] = sc.split(";", 1)[0].strip()
+                    if resp.status_code in (301, 302, 303, 307, 308):
+                        loc = resp.headers.get("location", "")
+                        nxt = loc if loc.startswith("http") else urljoin(url, loc)
+                        if nxt not in seen:
+                            queue.insert(0, nxt)
                         continue
                     if resp.status_code >= 400 or "html" not in resp.headers.get("content-type", ""):
                         unreachable.append(url)
@@ -338,6 +363,48 @@ class ExploreAppTool(Tool):
                                 queue.append(nxt)
                         except ValueError:
                             continue
+
+                    # If we have credentials and haven't tried logging in yet, look
+                    # for a form with a password field on any page we see.
+                    if (
+                        not login_tried
+                        and credentials
+                        and any(f.get("fields", {}).get("password") for f in parser.forms)
+                    ):
+                        login_form_path = url
+                        login_tried = True
+                        action = next(
+                            (f["action"] for f in parser.forms if f.get("fields", {}).get("password")),
+                            "/login",
+                        )
+                        login_url = action if action.startswith("http") else urljoin(base_url, action)
+                        form_data: dict[str, str] = {}
+                        for f in parser.forms:
+                            if f.get("fields", {}).get("password"):
+                                for key, field_info in f.get("fields", {}).items():
+                                    if key == "username":
+                                        form_data[key] = credentials.get("username", "")
+                                    elif key == "password":
+                                        form_data[key] = credentials.get("password", "")
+                                    elif key not in ("password",):
+                                        form_data[key] = field_info.get("value", "") or ""
+                        try:
+                            post_resp = client.post(
+                                login_url, data=form_data, headers=cookie_header,
+                                follow_redirects=False,
+                            )
+                            for sc in post_resp.headers.get_list("Set-Cookie"):
+                                name = sc.split("=", 1)[0].strip()
+                                cookie_header[name] = sc.split(";", 1)[0].strip()
+                            if post_resp.status_code in (301, 302, 303, 307, 308):
+                                redirect = post_resp.headers.get("location", "")
+                                nxt = redirect if redirect.startswith("http") else urljoin(login_url, redirect)
+                                queue.insert(0, nxt)
+                                if _signed_in_candidate(post_resp.text) or post_resp.status_code in (303, 302, 307):
+                                    signed_in = True
+                        except httpx.HTTPError as exc:
+                            errors.append(f"sign-in POST failed: {exc}")
+
         except Exception as exc:  # noqa: BLE001
             errors.append(str(exc))
 
@@ -354,6 +421,7 @@ class ExploreAppTool(Tool):
                 "unreachable": unreachable,
                 "errors": errors,
                 "simulated": True,
+                "signed_in": signed_in,
             },
             pages=len(snapshots),
             elements=sum(len(s.elements) for s in snapshots),
